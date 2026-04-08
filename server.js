@@ -1101,53 +1101,39 @@ function detectProduct(filename, userHint) {
 }
 
 // Default cities per campaign type for auto-generation
-// ═══ MASTER CITY DATABASE (with Meta API keys) ═══
+// ═══ MASTER CITY DATABASE v2.0 (source of truth) ═══
 const CITY_TIERS = {
-  URBAN_T1: { label: 'Urban Tier 1', type: 'WHOLESALE', default: true, cities: [
-    { name: 'Mexico City', key: '2673660', radius: 20, country: 'MX' },
-    { name: 'Guadalajara', key: '1522110', radius: 15, country: 'MX' },
-    { name: 'Monterrey', key: '1536363', radius: 15, country: 'MX' }
+  METRO_T1: { label: 'Metropolitan Tier 1', segment: 'metropolitan', tier: 1, default: true, budget_usd: 35, cities: [
+    { name: 'CDMX', key: '2673660', radius: 20 },
+    { name: 'Guadalajara', key: '1522110', radius: 15 },
+    { name: 'Monterrey', key: '1536363', radius: 15 },
+    { name: 'Veracruz', key: '1559085', radius: 15 },
+    { name: 'Oaxaca City', key: '1537775', radius: 20 }
   ]},
-  URBAN_T2: { label: 'Urban Tier 2', type: 'WHOLESALE', default: true, cities: [
-    { name: 'Puebla', key: '1542028', radius: 20, country: 'MX' },
-    { name: 'León', key: '1531557', radius: 20, country: 'MX' },
-    { name: 'Querétaro', key: '1542608', radius: 20, country: 'MX' },
-    { name: 'Toluca', key: '1557546', radius: 20, country: 'MX' },
-    { name: 'Veracruz', key: '1559085', radius: 15, country: 'MX' },
-    { name: 'Oaxaca City', key: '1537775', radius: 20, country: 'MX' },
-    { name: 'Mérida', key: '1535184', radius: 15, country: 'MX' },
-    { name: 'San Luis Potosí', key: '1550499', radius: 20, country: 'MX' }
+  METRO_T2: { label: 'Metropolitan Tier 2', segment: 'metropolitan', tier: 2, default: true, budget_usd: 20, cities: [
+    { name: 'Puebla', key: '1542028', radius: 20 },
+    { name: 'León', key: '1531557', radius: 20 },
+    { name: 'Querétaro', key: '1542608', radius: 20 },
+    { name: 'Toluca', key: '1557546', radius: 20 },
+    { name: 'San Luis Potosí', key: '1550499', radius: 20 }
   ]},
-  URBAN_T3: { label: 'Urban Tier 3', type: 'TESTING', default: false, cities: [
-    { name: 'Aguascalientes', key: '1503085', radius: 20, country: 'MX' },
-    { name: 'Tuxtla Gutiérrez', key: '1558350', radius: 15, country: 'MX' },
-    { name: 'Villahermosa', key: '1559412', radius: 20, country: 'MX' },
-    { name: 'Culiacán', key: '1513293', radius: 20, country: 'MX' },
-    { name: 'Hermosillo', key: '1523011', radius: 20, country: 'MX' },
-    { name: 'Chihuahua', key: '1510074', radius: 20, country: 'MX' },
-    { name: 'Saltillo', key: '1547395', radius: 20, country: 'MX' },
-    { name: 'Morelia', key: '1536439', radius: 20, country: 'MX' }
+  BEACH_T1: { label: 'Beach Tier 1', segment: 'beach', tier: 1, default: true, budget_usd: 30, cities: [
+    { name: 'Cancún', key: '1508006', radius: 15 },
+    { name: 'Playa del Carmen', key: '1540930', radius: 10 },
+    { name: 'Tulum', key: '1558246', radius: 10 },
+    { name: 'Puerto Vallarta', key: '1542382', radius: 15 },
+    { name: 'Mazatlán', key: '1535012', radius: 15 }
   ]},
-  BEACH_T1: { label: 'Beach Tier 1', type: 'BEACHFRONT', default: true, cities: [
-    { name: 'Cancún', key: '1508006', radius: 15, country: 'MX' },
-    { name: 'Playa del Carmen', key: '1540930', radius: 10, country: 'MX' },
-    { name: 'Tulum', key: '1558246', radius: 10, country: 'MX' }
-  ]},
-  BEACH_T2: { label: 'Beach Tier 2', type: 'BEACHFRONT', default: true, cities: [
-    { name: 'Puerto Vallarta', key: '1542382', radius: 15, country: 'MX' },
-    { name: 'Cabo San Lucas', key: '1506964', radius: 15, country: 'MX' },
-    { name: 'Mazatlán', key: '1535012', radius: 15, country: 'MX' },
-    { name: 'Acapulco', key: '1502429', radius: 15, country: 'MX' }
-  ]},
-  BEACH_T3: { label: 'Beach Tier 3', type: 'TESTING', default: false, cities: [
-    { name: 'Ixtapa', key: '1524313', radius: 15, country: 'MX' },
-    { name: 'Huatulco', key: '1523448', radius: 15, country: 'MX' },
-    { name: 'Cozumel', key: '1550858', radius: 10, country: 'MX' },
-    { name: 'Isla Mujeres', key: '1524168', radius: 10, country: 'MX' },
-    { name: 'Bacalar', key: '1505265', radius: 10, country: 'MX' },
-    { name: 'Progreso', key: '1541797', radius: 15, country: 'MX' }
+  BEACH_T2: { label: 'Beach Tier 2', segment: 'beach', tier: 2, default: true, budget_usd: 15, cities: [
+    { name: 'Los Cabos', key: '688614', radius: 15 },
+    { name: 'Acapulco', key: '1502429', radius: 15 },
+    { name: 'Cozumel', key: '1550858', radius: 10 },
+    { name: 'Isla Mujeres', key: '1524168', radius: 10 },
+    { name: 'Huatulco', key: '1523448', radius: 15 }
   ]}
 };
+
+const TOTAL_DAILY_BUDGET_CAP = 100; // USD
 
 // City tier info endpoint
 app.get('/api/city-tiers', (req, res) => res.json(CITY_TIERS));
@@ -1177,10 +1163,13 @@ const AUTO_CITIES = {
   RETARGET: ['National']
 };
 
-// --- AI Auto-Generate (media-first flow) ---
+// --- AI Auto-Generate v2.0 (config-driven) ---
 app.post('/api/ai-generate', (req, res) => {
-  const { asset_ids, media_urls, filenames, product_hint, price_hint, types, creative_mode, tiers, include_retarget, ads_per_adset } = req.body;
+  const { asset_ids, media_urls, filenames, product_hint, price_hint, creative_mode,
+          tiers, ads_per_adset, assets_per_ad, total_budget } = req.body;
   const requestedAdsPerAdset = Math.max(1, Math.min(parseInt(ads_per_adset) || 3, 10));
+  const requestedAssetsPerAd = Math.max(1, Math.min(parseInt(assets_per_ad) || 1, 5));
+  const budgetCap = Math.min(parseFloat(total_budget) || TOTAL_DAILY_BUDGET_CAP, 200);
 
   // Resolve assets — from library IDs or direct URLs
   let assets = [];
@@ -1230,114 +1219,88 @@ app.post('/api/ai-generate', (req, res) => {
   const uniqueProducts = [...new Set(allProducts.filter(Boolean))];
   const sameFamily = uniqueProducts.length <= 1;
 
-  // ═══ NEW STRUCTURE: Campaign → Ad Sets (by tier) → Ads ═══
-  // One campaign per product. Ad sets grouped by tier. Ads shared across cities in that tier.
+  // ═══ CAMPAIGN GENERATION v2.0 ═══
+  // 1 campaign → N ad sets (by tier) → N ads per ad set → N assets per ad (carousel)
 
-  // Determine active tiers
-  let activeTiers;
-  if (tiers && tiers.length > 0) {
-    activeTiers = tiers;
-  } else {
-    activeTiers = Object.keys(CITY_TIERS).filter(k => CITY_TIERS[k].default);
-  }
-  if (include_retarget !== false) activeTiers = [...activeTiers, 'RETARGET'];
+  // Active tiers
+  let activeTiers = tiers && tiers.length > 0
+    ? tiers
+    : Object.keys(CITY_TIERS).filter(k => CITY_TIERS[k].default);
 
-  // Build ad set groups — one ad set per tier
-  const adsetGroups = [];
-  for (const tierKey of activeTiers) {
-    if (tierKey === 'RETARGET') {
-      adsetGroups.push({
-        tierKey,
-        tierLabel: 'Retargeting',
-        type: 'RETARGET',
-        cities: [{ name: 'National', radius: 0 }],
-        budget: getAllocatedBudget('RETARGET')
-      });
-      continue;
-    }
-    const tier = CITY_TIERS[tierKey];
-    if (!tier) continue;
-    adsetGroups.push({
-      tierKey,
-      tierLabel: tier.label,
-      type: tier.type,
-      cities: tier.cities,
-      budget: getAllocatedBudget(tier.type)
-    });
-  }
+  // Calculate proportional budgets within cap
+  const totalTierBudget = activeTiers.reduce((s, t) => s + (CITY_TIERS[t]?.budget_usd || 0), 0);
+  const budgetScale = totalTierBudget > 0 ? Math.min(budgetCap / totalTierBudget, 1) : 1;
 
-  // Generate ONE campaign with multiple ad sets
+  // Naming
   const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
   const cleanProduct = (product || 'General').replace(/\s+/g, '');
-  const campaignName = `MX_WhatsApp_${cleanProduct}_${date}`;
-
-  // Use generic copy (no city-specific since ads are shared across cities)
   const copy = generateCopy('WHOLESALE', product, 'México', price);
 
+  // Build ad sets
   const adsets = [];
-  for (const group of adsetGroups) {
-    const adsetName = `${group.tierKey}_${cleanProduct}`;
+  for (const tierKey of activeTiers) {
+    const tier = CITY_TIERS[tierKey];
+    if (!tier) continue;
 
-    // Build targeting: all cities in this tier
-    const geoLocations = group.cities.map(c => ({
-      key: c.name,
-      radius: c.radius,
-      distance_unit: 'mile'
-    }));
+    const tierBudget = Math.round(tier.budget_usd * budgetScale * 100) / 100;
+    const adsetName = `${tier.segment}_T${tier.tier}_${cleanProduct}`;
+    const cityNames = tier.cities.map(c => c.name).join(', ');
 
-    const targeting = {
-      age_min: 25,
-      age_max: 65,
-      genders: [2],
-      locales: [23, 7], // 23 = Spanish (Latin America), 7 = Spanish (Spain)
-      geo_locations: { cities: geoLocations }
-    };
-
-    // Generate N ads per ad set, cycling through assets and copy
+    // Build ads — each ad gets N assets (carousel support)
     const ads = [];
-    if (mode === 'one_per_asset') {
-      activeAssets.forEach((asset, adIdx) => {
-        ads.push(buildAd(group.type, 'National', product, adIdx + 1, asset, copy, whatsappLink));
-      });
-    } else if (mode === 'variants_per_asset') {
-      activeAssets.forEach((asset, assetIdx) => {
-        for (let v = 0; v < Math.min(copy.primaryTexts.length, 2); v++) {
-          ads.push(buildAdVariant(group.type, 'National', product, assetIdx * 2 + v + 1, asset, copy, v, whatsappLink));
+    for (let adIdx = 0; adIdx < requestedAdsPerAdset; adIdx++) {
+      const adName = `${cleanProduct}_Ad${adIdx + 1}`;
+
+      // Assign assets to this ad (carousel = multiple assets per ad)
+      const adAssets = [];
+      for (let assetIdx = 0; assetIdx < requestedAssetsPerAd; assetIdx++) {
+        const globalIdx = (adIdx * requestedAssetsPerAd + assetIdx) % activeAssets.length;
+        adAssets.push(activeAssets[globalIdx]);
+      }
+
+      ads.push({
+        name: adName,
+        status: 'PAUSED',
+        format: requestedAssetsPerAd > 1 ? 'carousel' : 'single',
+        assets: adAssets.map(a => ({
+          id: a.id,
+          url: a.url,
+          type: a.type,
+          filename: a.filename
+        })),
+        creative: {
+          message: copy.primaryTexts[adIdx % copy.primaryTexts.length],
+          headline: copy.headlines[adIdx % copy.headlines.length],
+          hook: copy.hooks[adIdx % copy.hooks.length],
+          cta: copy.ctas[adIdx % copy.ctas.length],
+          link: whatsappLink
         }
       });
-    } else {
-      for (let adIdx = 0; adIdx < requestedAdsPerAdset; adIdx++) {
-        const asset = activeAssets[adIdx % activeAssets.length];
-        ads.push(buildAd(group.type, 'National', product, adIdx + 1, asset, copy, whatsappLink));
-      }
     }
-
-    const cityNames = group.cities.map(c => c.name).join(', ');
 
     adsets.push({
       name: adsetName,
-      tier: group.tierKey,
-      tier_label: group.tierLabel,
-      type: group.type,
+      tier: tierKey,
+      tier_label: tier.label,
+      segment: tier.segment,
       status: 'PAUSED',
-      optimization_goal: 'LINK_CLICKS',
+      optimization_goal: 'CONVERSATIONS',
       billing_event: 'IMPRESSIONS',
-      daily_budget: group.budget.daily,
-      targeting,
-      cities: group.cities,
+      daily_budget: tierBudget,
+      cities: tier.cities,
       cities_summary: cityNames,
-      audience: {
-        name: `Women_25+_Spanish_${group.tierKey}`,
-        desc: `Mujeres 25+, Español — ${cityNames}`
-      },
+      cities_count: tier.cities.length,
+      audience: { desc: `Mujeres 25+, Español — ${cityNames}` },
       ads
     });
   }
 
   const totalDailyBudget = adsets.reduce((s, a) => s + a.daily_budget, 0);
   const totalAds = adsets.reduce((s, a) => s + a.ads.length, 0);
+  const totalAssetsUsed = adsets.reduce((s, a) => s + a.ads.reduce((s2, ad) => s2 + ad.assets.length, 0), 0);
 
-  // Build single campaign
+  const campaignName = `MX_WhatsApp_${adsets[0]?.segment || 'all'}_T1_${cleanProduct}_${date}`;
+
   const campaign = {
     name: campaignName,
     product,
@@ -1360,19 +1323,28 @@ app.post('/api/ai-generate', (req, res) => {
     }
   }
 
+  // Validate budget cap
+  if (totalDailyBudget > budgetCap) {
+    return res.status(400).json({ error: `Presupuesto total ($${totalDailyBudget}) excede el límite ($${budgetCap})` });
+  }
+
   res.json({
     detected_product: detected,
     product, price, whatsapp_link: whatsappLink,
     same_product_family: sameFamily,
     creative_mode: mode,
-    media_summary: { total: assets.length, images: images.length, videos: videos.length, active: activeAssets.length, active_images: activeImages.length, active_videos: activeVideos.length },
+    media_summary: { total: assets.length, images: images.length, videos: videos.length, ig_posts: assets.filter(a => a.type === 'ig_post').length, active: activeAssets.length },
     campaign,
     total_campaigns: 1,
     total_adsets: adsets.length,
     total_ads: totalAds,
+    total_assets_used: totalAssetsUsed,
     total_daily_budget: totalDailyBudget,
+    budget_cap: budgetCap,
     active_tiers: activeTiers,
     ads_per_adset: requestedAdsPerAdset,
+    assets_per_ad: requestedAssetsPerAd,
+    ad_format: requestedAssetsPerAd > 1 ? 'carousel' : 'single',
     targeting: { age: '25-65', gender: 'Mujeres', language: 'Solo Español', objective: 'Engagement' },
     duplicate_warnings: duplicateWarnings,
     assets_used: assets.map(a => ({ id: a.id, filename: a.filename, type: a.type, url: a.url }))

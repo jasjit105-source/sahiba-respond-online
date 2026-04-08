@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS media_assets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   filename TEXT NOT NULL,
   url TEXT NOT NULL,
-  type TEXT CHECK(type IN ('image','video')) DEFAULT 'image',
+  type TEXT CHECK(type IN ('image','video','ig_post')) DEFAULT 'image',
   source TEXT CHECK(source IN ('upload','url','gdrive')) DEFAULT 'url',
   gdrive_file_id TEXT,
   gdrive_folder_id TEXT,

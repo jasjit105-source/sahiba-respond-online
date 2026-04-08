@@ -1,112 +1,83 @@
-// ═══ MASTER CITY DATABASE ═══
-// Only cities from this list are used. No guessing.
+// ═══ MASTER CITY DATABASE (source of truth) ═══
 
 export const CITY_TIERS = {
-  URBAN_T1: {
-    label: 'Urban Tier 1',
-    desc: 'Top metro markets',
+  METRO_T1: {
+    label: 'Metropolitan Tier 1',
+    segment: 'metropolitan',
+    tier: 1,
     default: true,
+    budget_usd: 35,
     cities: [
-      { name: 'CDMX', radius: 20 },
-      { name: 'Guadalajara', radius: 15 },
-      { name: 'Monterrey', radius: 15 },
+      { name: 'CDMX', key: '2673660', radius: 20, state: 'Ciudad de Mexico' },
+      { name: 'Guadalajara', key: '1522110', radius: 15, state: 'Jalisco' },
+      { name: 'Monterrey', key: '1536363', radius: 15, state: 'Nuevo Leon' },
+      { name: 'Veracruz', key: '1559085', radius: 15, state: 'Veracruz' },
+      { name: 'Oaxaca City', key: '1537775', radius: 20, state: 'Oaxaca' },
     ]
   },
-  URBAN_T2: {
-    label: 'Urban Tier 2',
-    desc: 'Strong wholesale cities',
+  METRO_T2: {
+    label: 'Metropolitan Tier 2',
+    segment: 'metropolitan',
+    tier: 2,
     default: true,
+    budget_usd: 20,
     cities: [
-      { name: 'Puebla', radius: 20 },
-      { name: 'León', radius: 20 },
-      { name: 'Querétaro', radius: 20 },
-      { name: 'Toluca', radius: 20 },
-      { name: 'Veracruz', radius: 15 },
-      { name: 'Oaxaca City', radius: 20 },
-      { name: 'Mérida', radius: 15 },
-      { name: 'San Luis Potosí', radius: 20 },
-    ]
-  },
-  URBAN_T3: {
-    label: 'Urban Tier 3 (Testing)',
-    desc: 'Expansion markets',
-    default: false,
-    cities: [
-      { name: 'Aguascalientes', radius: 20 },
-      { name: 'Tuxtla Gutiérrez', radius: 15 },
-      { name: 'Villahermosa', radius: 20 },
-      { name: 'Culiacán', radius: 20 },
-      { name: 'Hermosillo', radius: 20 },
-      { name: 'Chihuahua', radius: 20 },
-      { name: 'Saltillo', radius: 20 },
-      { name: 'Morelia', radius: 20 },
+      { name: 'Puebla', key: '1542028', radius: 20, state: 'Puebla' },
+      { name: 'León', key: '1531557', radius: 20, state: 'Guanajuato' },
+      { name: 'Querétaro', key: '1542608', radius: 20, state: 'Queretaro' },
+      { name: 'Toluca', key: '1557546', radius: 20, state: 'Estado de Mexico' },
+      { name: 'San Luis Potosí', key: '1550499', radius: 20, state: 'San Luis Potosi' },
     ]
   },
   BEACH_T1: {
     label: 'Beach Tier 1',
-    desc: 'Top tourist destinations',
+    segment: 'beach',
+    tier: 1,
     default: true,
+    budget_usd: 30,
     cities: [
-      { name: 'Cancún', radius: 15 },
-      { name: 'Playa del Carmen', radius: 10 },
-      { name: 'Tulum', radius: 10 },
+      { name: 'Cancún', key: '1508006', radius: 15, state: 'Quintana Roo' },
+      { name: 'Playa del Carmen', key: '1540930', radius: 10, state: 'Quintana Roo' },
+      { name: 'Tulum', key: '1558246', radius: 10, state: 'Quintana Roo' },
+      { name: 'Puerto Vallarta', key: '1542382', radius: 15, state: 'Jalisco' },
+      { name: 'Mazatlán', key: '1535012', radius: 15, state: 'Sinaloa' },
     ]
   },
   BEACH_T2: {
     label: 'Beach Tier 2',
-    desc: 'Major beach markets',
+    segment: 'beach',
+    tier: 2,
     default: true,
+    budget_usd: 15,
     cities: [
-      { name: 'Puerto Vallarta', radius: 15 },
-      { name: 'Los Cabos', radius: 15 },
-      { name: 'Mazatlán', radius: 15 },
-      { name: 'Acapulco', radius: 15 },
-    ]
-  },
-  BEACH_T3: {
-    label: 'Beach Tier 3 (Testing)',
-    desc: 'Secondary beach markets',
-    default: false,
-    cities: [
-      { name: 'Ixtapa-Zihuatanejo', radius: 15 },
-      { name: 'Huatulco', radius: 15 },
-      { name: 'Cozumel', radius: 10 },
-      { name: 'Isla Mujeres', radius: 10 },
-      { name: 'Bacalar', radius: 10 },
-      { name: 'Progreso', radius: 15 },
+      { name: 'Los Cabos', key: '688614', radius: 15, state: 'Baja California Sur' },
+      { name: 'Acapulco', key: '1502429', radius: 15, state: 'Guerrero' },
+      { name: 'Cozumel', key: '1550858', radius: 10, state: 'Quintana Roo' },
+      { name: 'Isla Mujeres', key: '1524168', radius: 10, state: 'Quintana Roo' },
+      { name: 'Huatulco', key: '1523448', radius: 15, state: 'Oaxaca' },
     ]
   }
 };
 
-// Tier groupings for campaign type mapping
-export const TIER_TO_TYPE = {
-  URBAN_T1: 'WHOLESALE',
-  URBAN_T2: 'WHOLESALE',
-  URBAN_T3: 'TESTING',
-  BEACH_T1: 'BEACHFRONT',
-  BEACH_T2: 'BEACHFRONT',
-  BEACH_T3: 'TESTING',
+// Asset types
+export const ASSET_TYPES = [
+  { value: 'image', label: 'Imagen', accept: '.jpg,.jpeg,.png,.webp,.gif' },
+  { value: 'video', label: 'Video', accept: '.mp4,.mov,.avi,.webm' },
+  { value: 'ig_post', label: 'Instagram Post', accept: '' },
+];
+
+// Structure controls
+export const STRUCTURE_DEFAULTS = {
+  adsets: { min: 1, max: 4, default: 4 },
+  ads_per_adset: { allowed: [1, 2, 3, 5], default: 3 },
+  assets_per_ad: { min: 1, max: 5, default: 1 },
+  total_daily_budget_cap: 100,
 };
 
-// Legacy exports for backward compat
-export const BEACHFRONT_CITIES = [
-  ...CITY_TIERS.BEACH_T1.cities,
-  ...CITY_TIERS.BEACH_T2.cities,
-  ...CITY_TIERS.BEACH_T3.cities,
-].map(c => c.name);
-
-export const WHOLESALE_CITIES = [
-  ...CITY_TIERS.URBAN_T1.cities,
-  ...CITY_TIERS.URBAN_T2.cities,
-].map(c => c.name);
-
-export const TESTING_CITIES = [
-  ...CITY_TIERS.URBAN_T3.cities,
-].map(c => c.name);
-
+// Campaign categories
 export const CAMPAIGN_CATEGORIES = {
-  BEACHFRONT: { label: 'Beachfront / Tourist', color: 'bg-cyan-100 text-cyan-800' },
-  WHOLESALE: { label: 'Wholesale City', color: 'bg-purple-100 text-purple-800' },
+  BEACHFRONT: { label: 'Beach', color: 'bg-cyan-100 text-cyan-800' },
+  WHOLESALE: { label: 'Metropolitan', color: 'bg-purple-100 text-purple-800' },
   TESTING: { label: 'Testing', color: 'bg-amber-100 text-amber-800' },
   RETARGET: { label: 'Retargeting', color: 'bg-pink-100 text-pink-800' },
   UNCATEGORIZED: { label: 'Uncategorized', color: 'bg-gray-100 text-gray-600' }
