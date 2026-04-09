@@ -14,6 +14,7 @@ async function request(method, path, body) {
 export const api = {
   // Dashboard
   getDashboard: (from, to) => request('GET', `/dashboard?from=${from}&to=${to}`),
+  getAnalytics: (from, to) => request('GET', `/analytics?from=${from}&to=${to}`),
 
   // Campaigns
   getCampaigns: () => request('GET', '/campaigns'),

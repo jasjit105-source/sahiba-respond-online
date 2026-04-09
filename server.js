@@ -354,6 +354,178 @@ app.get('/api/dashboard', (req, res) => {
   res.json({ totals, dailyTrend, campaignPerf, funnel, totalSales, alerts });
 });
 
+// --- Live Analytics (Pipeboard direct) ---
+app.get('/api/analytics', async (req, res) => {
+  const { from, to } = req.query;
+  const dateFrom = from || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+  const dateTo = to || new Date().toISOString().split('T')[0];
+  const timeRange = { since: dateFrom, until: dateTo };
+
+  try {
+    // 1. Campaign-level insights
+    const campRaw = extractText(await mcpCall('get_insights', {
+      object_id: AD_ACCOUNT_ID,
+      level: 'campaign',
+      time_range: timeRange
+    }));
+    const campData = campRaw?.data || (Array.isArray(campRaw) ? campRaw : []);
+
+    // 2. Daily breakdown for day-of-week analysis
+    const dailyRaw = extractText(await mcpCall('get_insights', {
+      object_id: AD_ACCOUNT_ID,
+      level: 'account',
+      time_range: timeRange,
+      time_breakdown: 'day'
+    }));
+
+    // Parse campaign data with messaging metrics
+    const campaigns = campData.map(c => {
+      const actions = c.actions || [];
+      const msgReply = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_first_reply')?.value || 0);
+      const msgConn = parseInt(actions.find(a => a.action_type === 'onsite_conversion.total_messaging_connection')?.value || 0);
+      const msgDepth2 = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_user_depth_2_message_send')?.value || 0);
+      const msgDepth3 = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_user_depth_3_message_send')?.value || 0);
+      const msgDepth5 = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_user_depth_5_message_send')?.value || 0);
+      const spend = parseFloat(c.spend || 0);
+      const costPerReply = msgReply > 0 ? spend / msgReply : null;
+
+      return {
+        campaign_id: c.campaign_id,
+        campaign_name: c.campaign_name,
+        spend,
+        impressions: parseInt(c.impressions || 0),
+        clicks: parseInt(c.clicks || 0),
+        reach: parseInt(c.reach || 0),
+        ctr: parseFloat(c.ctr || 0),
+        cpc: parseFloat(c.cpc || 0),
+        cpm: parseFloat(c.cpm || 0),
+        messaging_replies: msgReply,
+        messaging_connections: msgConn,
+        messaging_depth_2: msgDepth2,
+        messaging_depth_3: msgDepth3,
+        messaging_depth_5: msgDepth5,
+        cost_per_reply: costPerReply,
+        effective_status: c.effective_status || c.campaign_status || 'UNKNOWN'
+      };
+    }).filter(c => c.spend > 0);
+
+    // Account-level totals
+    const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0);
+    const totalReplies = campaigns.reduce((s, c) => s + c.messaging_replies, 0);
+    const totalConnections = campaigns.reduce((s, c) => s + c.messaging_connections, 0);
+    const totalDepth2 = campaigns.reduce((s, c) => s + c.messaging_depth_2, 0);
+    const totalDepth3 = campaigns.reduce((s, c) => s + c.messaging_depth_3, 0);
+    const totalDepth5 = campaigns.reduce((s, c) => s + c.messaging_depth_5, 0);
+    const totalImpressions = campaigns.reduce((s, c) => s + c.impressions, 0);
+    const totalClicks = campaigns.reduce((s, c) => s + c.clicks, 0);
+    const totalReach = campaigns.reduce((s, c) => s + c.reach, 0);
+    const avgCostPerReply = totalReplies > 0 ? totalSpend / totalReplies : 0;
+    const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions * 100) : 0;
+    const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions * 1000) : 0;
+    const avgCpc = totalClicks > 0 ? totalSpend / totalClicks : 0;
+
+    // Campaign verdicts
+    const withVerdicts = campaigns.map(c => {
+      let verdict = 'MONITOR';
+      let verdict_color = 'purple';
+
+      if (c.cost_per_reply !== null && c.cost_per_reply < avgCostPerReply * 0.75 && c.messaging_replies >= 20 && c.spend > 50) {
+        verdict = 'INCREASE_BUDGET'; verdict_color = 'green';
+      } else if (c.effective_status === 'PAUSED' && c.cost_per_reply !== null && c.cost_per_reply < avgCostPerReply) {
+        verdict = 'REACTIVATE'; verdict_color = 'green';
+      } else if ((c.ctr > avgCtr * 1.2 || c.cpc < avgCpc * 0.5) && c.spend < 100) {
+        verdict = 'TEST_AT_SCALE'; verdict_color = 'blue';
+      } else if (c.cost_per_reply !== null && c.cost_per_reply > avgCostPerReply * 5) {
+        verdict = 'PAUSE'; verdict_color = 'red';
+      } else if (c.cost_per_reply !== null && c.cost_per_reply > avgCostPerReply * 2) {
+        verdict = 'DECREASE_BUDGET'; verdict_color = 'red';
+      } else if (c.messaging_replies < 10 && c.spend > 100) {
+        verdict = 'PAUSE'; verdict_color = 'red';
+      }
+
+      return { ...c, verdict, verdict_color };
+    }).sort((a, b) => (a.cost_per_reply || 999) - (b.cost_per_reply || 999));
+
+    // Day-of-week analysis from daily data
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayBuckets = {};
+    dayNames.forEach(d => { dayBuckets[d] = { spend: [], clicks: [], replies: [] }; });
+
+    const dailyData = dailyRaw?.segmented_metrics || dailyRaw?.data || [];
+    if (Array.isArray(dailyData)) {
+      for (const row of dailyData) {
+        const dateStr = row.date_start || row.date;
+        if (!dateStr) continue;
+        const dayIdx = new Date(dateStr + 'T12:00:00').getDay();
+        const dayName = dayNames[dayIdx];
+        const metrics = row.metrics || row;
+        const replies = parseInt((metrics.actions || []).find(a => a.action_type === 'onsite_conversion.messaging_first_reply')?.value || 0);
+        dayBuckets[dayName].spend.push(parseFloat(metrics.spend || 0));
+        dayBuckets[dayName].clicks.push(parseInt(metrics.clicks || 0));
+        dayBuckets[dayName].replies.push(replies);
+      }
+    }
+
+    const dayOfWeek = dayNames.map(day => {
+      const b = dayBuckets[day];
+      const avgSpend = b.spend.length > 0 ? b.spend.reduce((s, v) => s + v, 0) / b.spend.length : 0;
+      const avgClicks = b.clicks.length > 0 ? b.clicks.reduce((s, v) => s + v, 0) / b.clicks.length : 0;
+      const avgReplies = b.replies.length > 0 ? b.replies.reduce((s, v) => s + v, 0) / b.replies.length : 0;
+      const cpr = avgReplies > 0 ? avgSpend / avgReplies : null;
+      return { day, avg_spend: Math.round(avgSpend * 100) / 100, avg_clicks: Math.round(avgClicks), avg_replies: Math.round(avgReplies * 10) / 10, cost_per_reply: cpr ? Math.round(cpr * 100) / 100 : null, days_count: b.spend.length };
+    }).sort((a, b) => (a.cost_per_reply || 999) - (b.cost_per_reply || 999));
+
+    // Messaging funnel
+    const funnel = {
+      connections: totalConnections,
+      first_reply: totalReplies,
+      depth_2: totalDepth2,
+      depth_3: totalDepth3,
+      depth_5: totalDepth5
+    };
+
+    // Insights: weekend vs weekday
+    const weekendCPR = dayOfWeek.filter(d => d.day === 'Saturday' || d.day === 'Sunday').reduce((s, d) => s + (d.cost_per_reply || 0), 0) / 2;
+    const weekdayCPR = dayOfWeek.filter(d => d.day !== 'Saturday' && d.day !== 'Sunday' && d.cost_per_reply).reduce((s, d) => s + d.cost_per_reply, 0) / 5;
+    const weekendAdvantage = weekdayCPR > 0 ? Math.round((1 - weekendCPR / weekdayCPR) * 100) : 0;
+
+    const insights = [];
+    if (weekendAdvantage > 20) {
+      insights.push({ type: 'opportunity', message: `Fines de semana son ${weekendAdvantage}% más baratos por respuesta. Considera aumentar presupuesto sáb/dom.` });
+    }
+    const pauseCandidates = withVerdicts.filter(c => c.verdict === 'PAUSE');
+    if (pauseCandidates.length > 0) {
+      insights.push({ type: 'action', message: `${pauseCandidates.length} campaña(s) deben pausarse: ${pauseCandidates.map(c => c.campaign_name).join(', ')}` });
+    }
+    const scaleCandidates = withVerdicts.filter(c => c.verdict === 'INCREASE_BUDGET');
+    if (scaleCandidates.length > 0) {
+      insights.push({ type: 'action', message: `${scaleCandidates.length} campaña(s) listas para escalar: ${scaleCandidates.map(c => c.campaign_name).join(', ')}` });
+    }
+
+    res.json({
+      period: { from: dateFrom, to: dateTo },
+      kpis: {
+        total_spend: Math.round(totalSpend * 100) / 100,
+        messaging_replies: totalReplies,
+        cost_per_reply: Math.round(avgCostPerReply * 100) / 100,
+        ctr: Math.round(avgCtr * 100) / 100,
+        cpm: Math.round(avgCpm * 100) / 100,
+        cpc: Math.round(avgCpc * 1000) / 1000,
+        reach: totalReach,
+        impressions: totalImpressions
+      },
+      campaigns: withVerdicts,
+      day_of_week: dayOfWeek,
+      funnel,
+      insights,
+      weekend_advantage: weekendAdvantage
+    });
+  } catch (e) {
+    console.error('Analytics error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- Campaigns ---
 app.get('/api/campaigns', (req, res) => {
   res.json(all(`SELECT c.*,
@@ -1435,7 +1607,8 @@ app.post('/api/bulk-publish', async (req, res) => {
         name: camp.name,
         objective: camp.objective || 'OUTCOME_ENGAGEMENT',
         status: 'PAUSED',
-        special_ad_categories: camp.special_ad_categories || []
+        special_ad_categories: camp.special_ad_categories || [],
+        use_adset_level_budgets: true
       }));
       const campaignId = campResult?.id;
       if (!campaignId) { results.push({ name: camp.name, error: 'Failed to create campaign: ' + JSON.stringify(campResult) }); continue; }
@@ -1480,6 +1653,7 @@ app.post('/api/bulk-publish', async (req, res) => {
           };
 
           console.log(`    Creating ad set: ${adset.name}`);
+          const adsetBudgetCents = Math.round((adset.daily_budget || 25) * 100).toString();
           const adsetParams = {
             account_id: AD_ACCOUNT_ID,
             campaign_id: campaignId,
@@ -1487,6 +1661,7 @@ app.post('/api/bulk-publish', async (req, res) => {
             optimization_goal: 'CONVERSATIONS',
             billing_event: 'IMPRESSIONS',
             bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+            daily_budget: adsetBudgetCents,
             destination_type: 'WHATSAPP',
             promoted_object: {
               page_id: pageId,
@@ -1506,80 +1681,115 @@ app.post('/api/bulk-publish', async (req, res) => {
             ON CONFLICT(meta_id) DO UPDATE SET name=excluded.name`,
             [adsetId, campaignId, adset.name, adset.optimization_goal, adset.daily_budget]);
 
-          // 3. Create ads — one ad per image, Meta rotates them automatically
-          // (Carousel/dynamic creative not supported with ENGAGEMENT + WHATSAPP)
+          // 3. Create ads from assets array (v2.0 format)
           const whatsappSetting = get("SELECT value FROM settings WHERE key = 'whatsapp_link'");
           const adLink = whatsappSetting?.value || 'https://wa.me/5215657534707';
           const adResults = [];
-          const uploadedHashes = {};
+          const uploadedHashes = {}; // url → hash cache
+
+          // Helper: upload one image to Meta
+          async function uploadImage(url) {
+            if (uploadedHashes[url]) return uploadedHashes[url];
+            let hash = null;
+            if (url.startsWith('http')) {
+              try {
+                const r = extractText(await mcpCall('upload_ad_image', { account_id: AD_ACCOUNT_ID, image_url: url }));
+                hash = r?.hash || r?.image_hash;
+              } catch (e) { console.log(`        Remote upload failed: ${e.message}`); }
+            } else if (url.startsWith('/uploads/')) {
+              try {
+                const localPath = join(UPLOADS_DIR, url.replace('/uploads/', ''));
+                if (existsSync(localPath)) {
+                  const fileData = readFileSync(localPath);
+                  const ext = url.match(/\.(jpg|jpeg|png|gif|webp)$/i)?.[1] || 'png';
+                  const dataUrl = `data:image/${ext === 'png' ? 'png' : 'jpeg'};base64,${fileData.toString('base64')}`;
+                  console.log(`        Uploading: ${url.split('/').pop()} (${(fileData.length/1024).toFixed(0)}KB)`);
+                  const r = extractText(await mcpCall('upload_ad_image', { account_id: AD_ACCOUNT_ID, file: dataUrl }));
+                  hash = r?.hash || r?.image_hash;
+                }
+              } catch (e) { console.log(`        Local upload failed: ${e.message}`); }
+            }
+            if (hash) { uploadedHashes[url] = hash; console.log(`        Hash: ${hash}`); }
+            return hash;
+          }
 
           for (const ad of (adset.ads || [])) {
             try {
-              console.log(`      Creating ad: ${ad.name}`);
-              const imgUrl = ad.creative?.image_url;
-              let thisHash = null;
+              console.log(`      Creating ad: ${ad.name} [${ad.format || 'single'}]`);
 
-              // Upload image to Meta
-              if (imgUrl && uploadedHashes[imgUrl]) {
-                thisHash = uploadedHashes[imgUrl];
-                console.log(`        Reusing hash: ${thisHash}`);
-              } else if (imgUrl && imgUrl.startsWith('http')) {
-                try {
-                  const r = extractText(await mcpCall('upload_ad_image', { account_id: AD_ACCOUNT_ID, image_url: imgUrl }));
-                  thisHash = r?.hash || r?.image_hash;
-                  if (thisHash) uploadedHashes[imgUrl] = thisHash;
-                } catch (e) { console.log(`        Upload failed: ${e.message}`); }
-              } else if (imgUrl && imgUrl.startsWith('/uploads/')) {
-                try {
-                  const localPath = join(UPLOADS_DIR, imgUrl.replace('/uploads/', ''));
-                  if (existsSync(localPath)) {
-                    const fileData = readFileSync(localPath);
-                    const ext = imgUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i)?.[1] || 'jpeg';
-                    const dataUrl = `data:image/${ext === 'png' ? 'png' : 'jpeg'};base64,${fileData.toString('base64')}`;
-                    console.log(`        Uploading: ${ad.creative?.image_url?.split('/').pop()} (${(fileData.length/1024).toFixed(0)}KB)`);
-                    const r = extractText(await mcpCall('upload_ad_image', { account_id: AD_ACCOUNT_ID, file: dataUrl }));
-                    thisHash = r?.hash || r?.image_hash;
-                    if (thisHash) { uploadedHashes[imgUrl] = thisHash; console.log(`        Hash: ${thisHash}`); }
+              // Get image assets from ad.assets (v2.0) or fallback to ad.creative.image_url (v1)
+              const adAssets = ad.assets || [];
+              const imageAssets = adAssets.filter(a => a.type === 'image' || a.type === 'ig_post');
+              const fallbackUrl = ad.creative?.image_url;
+
+              // Upload all images for this ad
+              const hashes = [];
+              if (imageAssets.length > 0) {
+                for (const asset of imageAssets) {
+                  if (asset.url) {
+                    const hash = await uploadImage(asset.url);
+                    if (hash) hashes.push(hash);
                   }
-                } catch (e) { console.log(`        Local upload failed: ${e.message}`); }
+                }
+              } else if (fallbackUrl) {
+                const hash = await uploadImage(fallbackUrl);
+                if (hash) hashes.push(hash);
               }
 
-              if (!thisHash) { adResults.push({ name: ad.name, error: 'Image upload failed' }); continue; }
+              if (hashes.length === 0) {
+                adResults.push({ name: ad.name, error: 'No images uploaded' });
+                continue;
+              }
 
-              // Create creative (single image)
+              // Create creative — carousel if multiple hashes, single if one
               let creativeId = null;
-              try {
-                const cr = extractText(await mcpCall('create_ad_creative', {
+              const primaryText = ad.creative?.message || 'Catálogo GRATIS por WhatsApp';
+
+              // Create ONE ad per image (Engagement+WhatsApp doesn't support carousel)
+              // Meta rotates ads automatically within the ad set
+              for (let hi = 0; hi < hashes.length; hi++) {
+                const adName = hashes.length > 1 ? `${ad.name}_${hi + 1}` : ad.name;
+                const copyIdx = hi % (ad.creative ? 3 : 1);
+                const texts = [
+                  ad.creative?.message || primaryText,
+                  ad.creative?.hook || primaryText,
+                  primaryText
+                ];
+
+                let creativeId = null;
+                try {
+                  const cr = extractText(await mcpCall('create_ad_creative', {
+                    account_id: AD_ACCOUNT_ID,
+                    name: adName + '_creative',
+                    page_id: pageId,
+                    image_hash: hashes[hi],
+                    message: texts[copyIdx],
+                    link_url: adLink,
+                    call_to_action_type: 'WHATSAPP_MESSAGE'
+                  }));
+                  creativeId = cr?.id || cr?.creative_id;
+                  if (creativeId) console.log(`        Creative: ${creativeId}`);
+                } catch (e) { console.log(`        Creative failed: ${e.message}`); }
+
+                if (!creativeId) { adResults.push({ name: adName, error: 'Creative failed' }); continue; }
+
+                const adResult = extractText(await mcpCall('create_ad', {
                   account_id: AD_ACCOUNT_ID,
-                  name: ad.name + '_creative',
-                  page_id: pageId,
-                  image_hash: thisHash,
-                  message: ad.creative?.message || 'Catálogo GRATIS por WhatsApp',
-                  link_url: adLink,
-                  call_to_action_type: 'WHATSAPP_MESSAGE'
+                  adset_id: adsetId,
+                  name: adName,
+                  status: 'PAUSED',
+                  creative_id: creativeId
                 }));
-                creativeId = cr?.id || cr?.creative_id;
-              } catch (e) { console.log(`        Creative failed: ${e.message}`); }
-
-              if (!creativeId) { adResults.push({ name: ad.name, error: 'Creative failed' }); continue; }
-
-              // Create ad
-              const adResult = extractText(await mcpCall('create_ad', {
-                account_id: AD_ACCOUNT_ID,
-                adset_id: adsetId,
-                name: ad.name,
-                status: 'PAUSED',
-                creative_id: creativeId
-              }));
-              const adId = adResult?.id;
-              if (adId) {
-                adResults.push({ name: ad.name, id: adId, creative_id: creativeId });
-                console.log(`        Ad created: ${adId}`);
-              } else {
-                adResults.push({ name: ad.name, error: JSON.stringify(adResult).slice(0, 150) });
-              }
+                const adId = adResult?.id;
+                if (adId) {
+                  adResults.push({ name: adName, id: adId, creative_id: creativeId });
+                  console.log(`        Ad created: ${adId}`);
+                } else {
+                  adResults.push({ name: adName, error: JSON.stringify(adResult).slice(0, 150) });
+                }
+              } // end for hashes loop
             } catch (e) { adResults.push({ name: ad.name, error: e.message }); }
-          }
+          } // end for ads loop
 
           adsetResults.push({ name: adset.name, id: adsetId, ads: adResults });
         } catch (e) { adsetResults.push({ name: adset.name, error: e.message }); }
