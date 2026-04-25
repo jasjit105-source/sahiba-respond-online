@@ -22,7 +22,15 @@
   status = 200
   force = true
 
-# SPA fallback so React Router routes (/leads, /tracker, etc.) work on refresh
+# Clean URLs for the Respond Tracker static page
+# So agents can use /respond?v=nancy instead of /respond.html?v=nancy
+[[redirects]]
+  from = "/respond"
+  to = "/respond.html"
+  status = 200
+
+# SPA fallback so React Router routes (/leads, /tracker, etc.) work on refresh.
+# Static files (including /respond.html) are served first because force isn't set.
 [[redirects]]
   from = "/*"
   to = "/index.html"

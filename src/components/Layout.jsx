@@ -11,6 +11,9 @@ const NAV = [
   { to: '/leads', label: 'Leads', icon: '\u{1F4CB}' },
   { to: '/agents', label: 'Agents', icon: '\u{1F9D1}' },
   { to: '/alerts', label: 'Alerts', icon: '\u{1F514}' },
+  // External: standalone Respond Tracker page (vanilla HTML in /public/respond.html).
+  // Renders as a normal <a> in the sidebar. Agents bookmark /respond?v=nancy directly.
+  { to: '/respond', label: 'Respond Tracker', icon: '\u{1F4AC}', external: true },
 ];
 
 export default function Layout({ children }) {
@@ -23,7 +26,16 @@ export default function Layout({ children }) {
           <p className="text-[11px] text-gray-500 mt-0.5">FB Ads Manager</p>
         </div>
         <nav className="mt-2">
-          {NAV.map(n => (
+          {NAV.map(n => n.external ? (
+            <a
+              key={n.to}
+              href={n.to}
+              className="flex items-center gap-3 px-5 py-2.5 text-sm font-medium border-l-[3px] border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition-colors"
+            >
+              <span className="w-5 text-center">{n.icon}</span>
+              {n.label}
+            </a>
+          ) : (
             <NavLink
               key={n.to}
               to={n.to}
