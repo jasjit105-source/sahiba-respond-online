@@ -52,6 +52,10 @@ export const api = {
   // Sync
   sync: () => request('POST', '/sync'),
 
+  // Existing posts
+  getPagePosts: () => request('GET', '/page-posts'),
+  getIgPosts: () => request('GET', '/ig-posts'),
+
   // Settings
   getSettings: () => request('GET', '/settings'),
   saveSettings: (data) => request('POST', '/settings', data),

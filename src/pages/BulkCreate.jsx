@@ -4,8 +4,14 @@ import { api } from '../api';
 import { CITY_TIERS, STRUCTURE_DEFAULTS } from '../utils/constants';
 import { fmtMoney } from '../utils/format';
 
+const AD_MODES = [
+  { value: 'new', label: 'Crear anuncio nuevo', desc: 'Sube imágenes/videos desde tu Media Library', icon: '\u{1F4F7}' },
+  { value: 'existing_post', label: 'Usar publicación existente', desc: 'Promociona un post de Facebook o Instagram Reel', icon: '\u{1F4F1}' },
+];
+
 export default function BulkCreate() {
   const [searchParams] = useSearchParams();
+  const [adMode, setAdMode] = useState('new'); // 'new' | 'existing_post'
   const [phase, setPhase] = useState('select');
   const [allAssets, setAllAssets] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -15,6 +21,11 @@ export default function BulkCreate() {
   const [publishing, setPublishing] = useState(false);
   const [expandedAdset, setExpandedAdset] = useState(null);
   const [productHint, setProductHint] = useState('');
+
+  // Existing post mode
+  const [postIds, setPostIds] = useState(['']);
+  const [igAccounts, setIgAccounts] = useState([]);
+  const [pageId, setPageId] = useState('');
 
   // Structure controls
   const [adsPerAdset, setAdsPerAdset] = useState(STRUCTURE_DEFAULTS.ads_per_adset.default);
@@ -32,6 +43,9 @@ export default function BulkCreate() {
       const pre = searchParams.get('assets');
       if (pre) setSelected(new Set(pre.split(',').map(Number).filter(Boolean)));
     });
+    // Load page + IG info
+    api.getSettings().then(s => { if (s.page_id) setPageId(s.page_id); });
+    api.getIgPosts().then(d => { if (Array.isArray(d)) setIgAccounts(d); }).catch(() => {});
   }, []);
 
   const filteredAssets = allAssets.filter(a => {
@@ -63,6 +77,81 @@ export default function BulkCreate() {
   };
 
   const handleGenerate = async () => {
+    if (adMode === 'existing_post') {
+      // Build campaign from existing posts
+      const validPosts = postIds.filter(p => p.trim());
+      if (validPosts.length === 0) return alert('Ingresa al menos un Post ID');
+      if (selectedTiers.length === 0) return alert('Selecciona al menos un tier');
+      setPhase('generating');
+
+      // Build campaign structure with existing posts as ads
+      const activeTiers = selectedTiers;
+      const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      const productName = productHint || 'Post';
+
+      const adsets = activeTiers.map(tierKey => {
+        const tier = CITY_TIERS[tierKey];
+        if (!tier) return null;
+        return {
+          name: `${tier.segment}_T${tier.tier}_${productName}`,
+          tier: tierKey,
+          tier_label: tier.label,
+          segment: tier.segment,
+          status: 'PAUSED',
+          optimization_goal: 'CONVERSATIONS',
+          billing_event: 'IMPRESSIONS',
+          daily_budget: tier.budget_usd,
+          cities: tier.cities,
+          cities_summary: tier.cities.map(c => c.name).join(', '),
+          cities_count: tier.cities.length,
+          audience: { desc: `Mujeres 25+, Español — ${tier.cities.map(c => c.name).join(', ')}` },
+          ads: validPosts.map((postId, i) => {
+            // Format: {page_id}_{post_id} or just post_id
+            const storyId = postId.includes('_') ? postId : `${pageId}_${postId}`;
+            return {
+              name: `${productName}_Post${i + 1}`,
+              status: 'PAUSED',
+              format: 'existing_post',
+              object_story_id: storyId,
+              assets: [{ type: 'ig_post', filename: `Post ${postId.slice(-8)}`, url: '' }],
+              creative: { message: 'Existing post' }
+            };
+          })
+        };
+      }).filter(Boolean);
+
+      const totalDailyBudget = adsets.reduce((s, a) => s + a.daily_budget, 0);
+      const totalAds = adsets.reduce((s, a) => s + a.ads.length, 0);
+
+      setResult({
+        product: productName,
+        ad_format: 'existing_post',
+        ads_per_adset: validPosts.length,
+        assets_per_ad: 1,
+        total_adsets: adsets.length,
+        total_ads: totalAds,
+        total_daily_budget: totalDailyBudget,
+        budget_cap: totalBudget,
+        media_summary: { active: validPosts.length },
+        targeting: { age: '25-65', gender: 'Mujeres', language: 'Solo Español', objective: 'Engagement' },
+        duplicate_warnings: [],
+        campaign: {
+          name: `MX_WhatsApp_${productName}_${date}`,
+          product: productName,
+          objective: 'OUTCOME_ENGAGEMENT',
+          status: 'PAUSED',
+          daily_budget: totalDailyBudget,
+          special_ad_categories: [],
+          adsets,
+          copy: { hooks: ['Existing post'], primaryTexts: ['Existing post'], headlines: ['Existing post'], ctas: ['WHATSAPP_MESSAGE'] },
+          targeting_summary: `Mujeres 25+, Español, ${adsets.length} ad sets, ${totalAds} ads`
+        }
+      });
+      setPhase('review');
+      return;
+    }
+
+    // Normal mode: create from media
     if (selected.size === 0) return alert('Selecciona al menos un asset');
     if (selectedTiers.length === 0) return alert('Selecciona al menos un tier');
     setPhase('generating');
@@ -107,6 +196,84 @@ export default function BulkCreate() {
       {/* ═══ SELECT ═══ */}
       {phase === 'select' && (
         <>
+          {/* Mode selector */}
+          <div className="flex gap-3 mb-2">
+            {AD_MODES.map(m => (
+              <button key={m.value} onClick={() => setAdMode(m.value)}
+                className={`flex-1 p-4 rounded-xl border-2 text-left transition-all ${adMode === m.value ? 'border-fb bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-400'}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">{m.icon}</span>
+                  <span className={`text-sm font-bold ${adMode === m.value ? 'text-fb' : 'text-gray-800'}`}>{m.label}</span>
+                </div>
+                <p className="text-[11px] text-gray-500">{m.desc}</p>
+              </button>
+            ))}
+          </div>
+
+          {/* ═══ EXISTING POST MODE ═══ */}
+          {adMode === 'existing_post' && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+              <div>
+                <h3 className="text-sm font-bold mb-1">Post IDs</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Pega el ID de tu publicación de Facebook o Instagram. Formato: <code className="bg-gray-100 px-1 rounded">page_id_post_id</code> o solo <code className="bg-gray-100 px-1 rounded">post_id</code>
+                </p>
+                {postIds.map((pid, i) => (
+                  <div key={i} className="flex gap-2 mb-2">
+                    <input className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" value={pid}
+                      onChange={e => { const p = [...postIds]; p[i] = e.target.value; setPostIds(p); }}
+                      placeholder={`ID del post ${i + 1} — ej: 514164875351531_880819934994361`} />
+                    {postIds.length > 1 && (
+                      <button onClick={() => setPostIds(postIds.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600 text-sm px-2">✕</button>
+                    )}
+                  </div>
+                ))}
+                <button onClick={() => setPostIds([...postIds, ''])} className="text-xs text-fb font-semibold hover:underline">+ Agregar otro post</button>
+              </div>
+
+              {pageId && (
+                <div className="text-xs text-gray-500">
+                  Page ID: <code className="bg-gray-100 px-1 rounded">{pageId}</code>
+                  {igAccounts.length > 0 && (
+                    <span className="ml-3">Instagram: {igAccounts.map(a => <code key={a.id} className="bg-gray-100 px-1 rounded ml-1">@{a.username || a.id}</code>)}</span>
+                  )}
+                </div>
+              )}
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 space-y-1">
+                <p><b>¿Cómo encontrar el Post ID?</b></p>
+                <p>1. Abre tu publicación en Facebook/Instagram</p>
+                <p>2. Copia la URL — el número al final es el post_id</p>
+                <p>3. Formato completo: <code>{pageId || '514164875351531'}_POST_ID</code></p>
+                <p>4. Para Instagram Reels: usa el ID del reel compartido en tu Facebook Page</p>
+              </div>
+
+              <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" value={productHint} onChange={e => setProductHint(e.target.value)}
+                placeholder="Nombre del producto (opcional)" />
+
+              {/* Tier selection */}
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-1.5">Ad Sets:</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
+                  {Object.entries(CITY_TIERS).map(([key, tier]) => (
+                    <button key={key} onClick={() => setSelectedTiers(prev => prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key])}
+                      className={`text-left px-2.5 py-2 rounded-lg border text-xs ${selectedTiers.includes(key) ? 'border-fb bg-blue-50 text-fb' : 'border-gray-200 text-gray-500'}`}>
+                      <div className="font-bold">{tier.label}</div>
+                      <div className="text-[10px] text-gray-400">{tier.cities.length} ciudades · ${tier.budget_usd}/día</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button onClick={handleGenerate}
+                className="w-full py-3 bg-fb text-white rounded-xl text-sm font-bold hover:bg-fb-dark">
+                Generar {selectedTiers.length} Ad Sets con {postIds.filter(p => p.trim()).length} Post{postIds.filter(p => p.trim()).length > 1 ? 's' : ''}
+              </button>
+            </div>
+          )}
+
+          {/* ═══ NEW AD MODE: media selection ═══ */}
+          {adMode === 'new' && <>
           {/* Filters */}
           <div className="flex gap-2 flex-wrap items-center">
             {[{ v: '', l: 'Todos' }, { v: 'image', l: 'Imágenes' }, { v: 'video', l: 'Videos' }, { v: 'ig_post', l: 'IG Posts' }].map(f => (
@@ -247,6 +414,7 @@ export default function BulkCreate() {
               </div>
             </div>
           )}
+          </>}
         </>
       )}
 
@@ -324,12 +492,18 @@ export default function BulkCreate() {
                     <div key={k} className="border border-gray-200 rounded-lg p-2.5">
                       <div className="flex items-center gap-2 mb-1.5">
                         <span className="text-xs font-bold">{ad.name}</span>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${ad.format === 'carousel' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                          {ad.format === 'carousel' ? `Carousel (${ad.assets.length})` : 'Single'}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${ad.format === 'existing_post' ? 'bg-gradient-to-r from-pink-100 to-orange-100 text-pink-700' : ad.format === 'carousel' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                          {ad.format === 'existing_post' ? `Post existente` : ad.format === 'carousel' ? `Carousel (${ad.assets.length})` : 'Single'}
                         </span>
                       </div>
                       <div className="flex gap-1.5 flex-wrap">
-                        {ad.assets.map((a, j) => (
+                        {ad.object_story_id && (
+                          <div className="flex items-center gap-1 bg-pink-50 rounded px-1.5 py-0.5 text-[10px] text-pink-700">
+                            <span className="font-bold">POST</span>
+                            <span className="font-mono max-w-[180px] truncate">{ad.object_story_id}</span>
+                          </div>
+                        )}
+                        {ad.assets && ad.assets.map((a, j) => (
                           <div key={j} className="flex items-center gap-1 bg-gray-50 rounded px-1.5 py-0.5 text-[10px] text-gray-600">
                             <span className={`font-bold ${a.type === 'video' ? 'text-purple-600' : a.type === 'ig_post' ? 'text-pink-600' : 'text-blue-600'}`}>
                               {a.type === 'video' ? 'VID' : a.type === 'ig_post' ? 'IG' : 'IMG'}

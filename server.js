@@ -355,170 +355,199 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 // --- Live Analytics (Pipeboard direct) ---
+const xA = (actions, type) => {
+  if (!actions) return 0;
+  const f = actions.find(x => x.action_type === type);
+  return f ? parseInt(f.value) : 0;
+};
+
 app.get('/api/analytics', async (req, res) => {
   const { from, to } = req.query;
   const dateFrom = from || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
   const dateTo = to || new Date().toISOString().split('T')[0];
   const timeRange = { since: dateFrom, until: dateTo };
+  const t0 = Date.now();
 
   try {
-    // 1. Campaign-level insights
-    const campRaw = extractText(await mcpCall('get_insights', {
-      object_id: AD_ACCOUNT_ID,
-      level: 'campaign',
-      time_range: timeRange
-    }));
-    const campData = campRaw?.data || (Array.isArray(campRaw) ? campRaw : []);
+    // Parallel: campaigns, daily account totals, ads
+    const [campRaw, dailyRaw, adsRaw] = await Promise.all([
+      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'campaign', time_range: timeRange }),
+      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'account', time_range: timeRange, time_breakdown: 'day' }),
+      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'ad', time_range: timeRange })
+    ]);
 
-    // 2. Daily breakdown for day-of-week analysis
-    const dailyRaw = extractText(await mcpCall('get_insights', {
-      object_id: AD_ACCOUNT_ID,
-      level: 'account',
-      time_range: timeRange,
-      time_breakdown: 'day'
-    }));
+    const campData = extractText(campRaw);
+    const dailyData = extractText(dailyRaw);
+    const adsData = extractText(adsRaw);
 
-    // Parse campaign data with messaging metrics
-    const campaigns = campData.map(c => {
-      const actions = c.actions || [];
-      const msgReply = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_first_reply')?.value || 0);
-      const msgConn = parseInt(actions.find(a => a.action_type === 'onsite_conversion.total_messaging_connection')?.value || 0);
-      const msgDepth2 = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_user_depth_2_message_send')?.value || 0);
-      const msgDepth3 = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_user_depth_3_message_send')?.value || 0);
-      const msgDepth5 = parseInt(actions.find(a => a.action_type === 'onsite_conversion.messaging_user_depth_5_message_send')?.value || 0);
-      const spend = parseFloat(c.spend || 0);
-      const costPerReply = msgReply > 0 ? spend / msgReply : null;
+    const campList = campData?.data || (Array.isArray(campData) ? campData : []);
+    const adsList = adsData?.data || (Array.isArray(adsData) ? adsData : []);
 
+    // Parse campaigns
+    const camps = campList.map(c => {
+      const ac = c.actions || [];
       return {
-        campaign_id: c.campaign_id,
-        campaign_name: c.campaign_name,
-        spend,
+        id: c.campaign_id,
+        name: c.campaign_name,
+        spend: parseFloat(c.spend || 0),
         impressions: parseInt(c.impressions || 0),
         clicks: parseInt(c.clicks || 0),
         reach: parseInt(c.reach || 0),
         ctr: parseFloat(c.ctr || 0),
         cpc: parseFloat(c.cpc || 0),
         cpm: parseFloat(c.cpm || 0),
-        messaging_replies: msgReply,
-        messaging_connections: msgConn,
-        messaging_depth_2: msgDepth2,
-        messaging_depth_3: msgDepth3,
-        messaging_depth_5: msgDepth5,
-        cost_per_reply: costPerReply,
-        effective_status: c.effective_status || c.campaign_status || 'UNKNOWN'
+        status: c.effective_status || c.campaign_status || '?',
+        msgs: xA(ac, 'onsite_conversion.messaging_first_reply'),
+        connections: xA(ac, 'onsite_conversion.total_messaging_connection'),
+        depth2: xA(ac, 'onsite_conversion.messaging_user_depth_2_message_send'),
+        depth3: xA(ac, 'onsite_conversion.messaging_user_depth_3_message_send'),
+        depth5: xA(ac, 'onsite_conversion.messaging_user_depth_5_message_send')
       };
-    }).filter(c => c.spend > 0);
+    });
 
-    // Account-level totals
-    const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0);
-    const totalReplies = campaigns.reduce((s, c) => s + c.messaging_replies, 0);
-    const totalConnections = campaigns.reduce((s, c) => s + c.messaging_connections, 0);
-    const totalDepth2 = campaigns.reduce((s, c) => s + c.messaging_depth_2, 0);
-    const totalDepth3 = campaigns.reduce((s, c) => s + c.messaging_depth_3, 0);
-    const totalDepth5 = campaigns.reduce((s, c) => s + c.messaging_depth_5, 0);
-    const totalImpressions = campaigns.reduce((s, c) => s + c.impressions, 0);
-    const totalClicks = campaigns.reduce((s, c) => s + c.clicks, 0);
-    const totalReach = campaigns.reduce((s, c) => s + c.reach, 0);
-    const avgCostPerReply = totalReplies > 0 ? totalSpend / totalReplies : 0;
-    const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions * 100) : 0;
-    const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions * 1000) : 0;
-    const avgCpc = totalClicks > 0 ? totalSpend / totalClicks : 0;
+    // Parse ads with messaging depth
+    const ads = adsList.map(a => {
+      const ac = a.actions || [];
+      const connections = xA(ac, 'onsite_conversion.total_messaging_connection');
+      const firstReply = xA(ac, 'onsite_conversion.messaging_first_reply');
+      const depth2 = xA(ac, 'onsite_conversion.messaging_user_depth_2_message_send');
+      const depth3 = xA(ac, 'onsite_conversion.messaging_user_depth_3_message_send');
+      const depth5 = xA(ac, 'onsite_conversion.messaging_user_depth_5_message_send');
+      const spend = parseFloat(a.spend || 0);
+      return {
+        id: a.ad_id,
+        name: a.ad_name,
+        campName: a.campaign_name,
+        campId: a.campaign_id,
+        spend,
+        impressions: parseInt(a.impressions || 0),
+        clicks: parseInt(a.clicks || 0),
+        reach: parseInt(a.reach || 0),
+        ctr: parseFloat(a.ctr || 0),
+        cpc: parseFloat(a.cpc || 0),
+        cpm: parseFloat(a.cpm || 0),
+        status: a.effective_status || '?',
+        // Messaging depth
+        connections,
+        firstReply,
+        depth2,
+        depth3,
+        depth5,
+        costPerReply: firstReply > 0 ? spend / firstReply : null,
+        costPer5Msg: depth5 > 0 ? spend / depth5 : null,
+        replyRate: connections > 0 ? (firstReply / connections * 100) : 0,
+        depthRate: connections > 0 ? (depth5 / connections * 100) : 0
+      };
+    }).sort((a, b) => b.spend - a.spend);
 
-    // Campaign verdicts
-    const withVerdicts = campaigns.map(c => {
-      let verdict = 'MONITOR';
-      let verdict_color = 'purple';
-
-      if (c.cost_per_reply !== null && c.cost_per_reply < avgCostPerReply * 0.75 && c.messaging_replies >= 20 && c.spend > 50) {
-        verdict = 'INCREASE_BUDGET'; verdict_color = 'green';
-      } else if (c.effective_status === 'PAUSED' && c.cost_per_reply !== null && c.cost_per_reply < avgCostPerReply) {
-        verdict = 'REACTIVATE'; verdict_color = 'green';
-      } else if ((c.ctr > avgCtr * 1.2 || c.cpc < avgCpc * 0.5) && c.spend < 100) {
-        verdict = 'TEST_AT_SCALE'; verdict_color = 'blue';
-      } else if (c.cost_per_reply !== null && c.cost_per_reply > avgCostPerReply * 5) {
-        verdict = 'PAUSE'; verdict_color = 'red';
-      } else if (c.cost_per_reply !== null && c.cost_per_reply > avgCostPerReply * 2) {
-        verdict = 'DECREASE_BUDGET'; verdict_color = 'red';
-      } else if (c.messaging_replies < 10 && c.spend > 100) {
-        verdict = 'PAUSE'; verdict_color = 'red';
-      }
-
-      return { ...c, verdict, verdict_color };
-    }).sort((a, b) => (a.cost_per_reply || 999) - (b.cost_per_reply || 999));
-
-    // Day-of-week analysis from daily data
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dayBuckets = {};
-    dayNames.forEach(d => { dayBuckets[d] = { spend: [], clicks: [], replies: [] }; });
-
-    const dailyData = dailyRaw?.segmented_metrics || dailyRaw?.data || [];
-    if (Array.isArray(dailyData)) {
-      for (const row of dailyData) {
-        const dateStr = row.date_start || row.date;
-        if (!dateStr) continue;
-        const dayIdx = new Date(dateStr + 'T12:00:00').getDay();
-        const dayName = dayNames[dayIdx];
-        const metrics = row.metrics || row;
-        const replies = parseInt((metrics.actions || []).find(a => a.action_type === 'onsite_conversion.messaging_first_reply')?.value || 0);
-        dayBuckets[dayName].spend.push(parseFloat(metrics.spend || 0));
-        dayBuckets[dayName].clicks.push(parseInt(metrics.clicks || 0));
-        dayBuckets[dayName].replies.push(replies);
-      }
+    // Parse daily (segmented_metrics format from Pipeboard)
+    const days = [];
+    const segmented = dailyData?.segmented_metrics || dailyData?.data || (Array.isArray(dailyData) ? dailyData : []);
+    for (const seg of segmented) {
+      const m = seg.metrics || seg;
+      const ac = m.actions || [];
+      days.push({
+        date: seg.period || seg.date_start || m.date_start,
+        spend: parseFloat(m.spend || 0),
+        impressions: parseInt(m.impressions || 0),
+        clicks: parseInt(m.clicks || 0),
+        reach: parseInt(m.reach || 0),
+        msgs: xA(ac, 'onsite_conversion.messaging_first_reply'),
+        connections: xA(ac, 'onsite_conversion.total_messaging_connection'),
+        depth2: xA(ac, 'onsite_conversion.messaging_user_depth_2_message_send'),
+        depth3: xA(ac, 'onsite_conversion.messaging_user_depth_3_message_send'),
+        depth5: xA(ac, 'onsite_conversion.messaging_user_depth_5_message_send')
+      });
     }
 
-    const dayOfWeek = dayNames.map(day => {
-      const b = dayBuckets[day];
-      const avgSpend = b.spend.length > 0 ? b.spend.reduce((s, v) => s + v, 0) / b.spend.length : 0;
-      const avgClicks = b.clicks.length > 0 ? b.clicks.reduce((s, v) => s + v, 0) / b.clicks.length : 0;
-      const avgReplies = b.replies.length > 0 ? b.replies.reduce((s, v) => s + v, 0) / b.replies.length : 0;
-      const cpr = avgReplies > 0 ? avgSpend / avgReplies : null;
-      return { day, avg_spend: Math.round(avgSpend * 100) / 100, avg_clicks: Math.round(avgClicks), avg_replies: Math.round(avgReplies * 10) / 10, cost_per_reply: cpr ? Math.round(cpr * 100) / 100 : null, days_count: b.spend.length };
-    }).sort((a, b) => (a.cost_per_reply || 999) - (b.cost_per_reply || 999));
+    // Totals
+    const tSpend = camps.reduce((s, c) => s + c.spend, 0);
+    const tMsgs = camps.reduce((s, c) => s + c.msgs, 0);
+    const tClicks = camps.reduce((s, c) => s + c.clicks, 0);
+    const tImps = camps.reduce((s, c) => s + c.impressions, 0);
+    const tReach = camps.reduce((s, c) => s + c.reach, 0);
+    const avgCPR = tMsgs > 0 ? tSpend / tMsgs : 999;
+    const bCTR = tImps > 0 ? (tClicks / tImps * 100) : 0;
+    const bCPM = tImps > 0 ? (tSpend / tImps * 1000) : 0;
 
-    // Messaging funnel
+    // Verdicts
+    const verdict = (c) => {
+      const msgs = c.msgs;
+      if (!msgs || msgs < 1) {
+        if (c.spend > 100) return { label: 'PAUSE', cls: 'dec', r: 'High spend, near-zero replies' };
+        if (c.ctr > 5) return { label: 'TEST MSG', cls: 'test', r: 'Strong engagement — test messaging objective' };
+        return { label: 'MONITOR', cls: 'mon', r: 'Insufficient data' };
+      }
+      const cpr = c.spend / msgs;
+      if (c.status === 'PAUSED' && cpr < avgCPR) return { label: 'REACTIVATE', cls: 'inc', r: `Was efficient at $${cpr.toFixed(2)}/reply` };
+      if (cpr < avgCPR * 0.75 && msgs >= 15) return { label: '\u2191 SCALE', cls: 'inc', r: `Top performer at $${cpr.toFixed(2)}/reply` };
+      if (cpr > avgCPR * 3) return { label: '\u2193 CUT', cls: 'dec', r: `$${cpr.toFixed(2)}/reply is ${(cpr/avgCPR).toFixed(1)}\u00D7 avg` };
+      if (cpr > avgCPR * 1.5) return { label: 'REDUCE', cls: 'dec', r: `Above avg at $${cpr.toFixed(2)}/reply` };
+      if (c.spend < 50 && c.ctr > 5) return { label: 'TEST', cls: 'test', r: 'Strong early signals' };
+      return { label: 'STEADY', cls: 'mon', r: `On track at $${cpr.toFixed(2)}/reply` };
+    };
+    camps.forEach(c => { c.verdict = verdict(c); });
+    camps.sort((a, b) => {
+      const ac = a.msgs > 0 ? a.spend / a.msgs : 9999;
+      const bc = b.msgs > 0 ? b.spend / b.msgs : 9999;
+      return ac - bc;
+    });
+
+    // DOW
+    const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const dow = {};
+    DOW.forEach(d => { dow[d] = { spend: 0, clicks: 0, impressions: 0, msgs: 0, count: 0 }; });
+    days.forEach(d => {
+      if (!d.spend && !d.clicks) return;
+      const dn = DOW[new Date(d.date + 'T12:00:00').getDay()];
+      dow[dn].spend += d.spend;
+      dow[dn].clicks += d.clicks;
+      dow[dn].impressions += d.impressions;
+      dow[dn].msgs += d.msgs;
+      dow[dn].count++;
+    });
+    const dowS = DOW.map(n => {
+      const d = dow[n];
+      if (!d.count) return null;
+      return {
+        day: n,
+        avgSpend: d.spend / d.count,
+        avgMsgs: d.msgs / d.count,
+        cpr: d.msgs > 0 ? d.spend / d.msgs : null
+      };
+    }).filter(Boolean).sort((a, b) => (a.cpr || 999) - (b.cpr || 999));
+
+    // Funnel
     const funnel = {
-      connections: totalConnections,
-      first_reply: totalReplies,
-      depth_2: totalDepth2,
-      depth_3: totalDepth3,
-      depth_5: totalDepth5
+      connections: days.reduce((s, d) => s + d.connections, 0),
+      firstReply: days.reduce((s, d) => s + d.msgs, 0),
+      depth2: days.reduce((s, d) => s + d.depth2, 0),
+      depth3: days.reduce((s, d) => s + d.depth3, 0),
+      depth5: days.reduce((s, d) => s + d.depth5, 0)
     };
 
-    // Insights: weekend vs weekday
-    const weekendCPR = dayOfWeek.filter(d => d.day === 'Saturday' || d.day === 'Sunday').reduce((s, d) => s + (d.cost_per_reply || 0), 0) / 2;
-    const weekdayCPR = dayOfWeek.filter(d => d.day !== 'Saturday' && d.day !== 'Sunday' && d.cost_per_reply).reduce((s, d) => s + d.cost_per_reply, 0) / 5;
-    const weekendAdvantage = weekdayCPR > 0 ? Math.round((1 - weekendCPR / weekdayCPR) * 100) : 0;
+    // Weekly
+    const weeks = {};
+    days.forEach(d => {
+      if (!d.spend) return;
+      const dt = new Date(d.date + 'T12:00:00');
+      const ws = new Date(dt);
+      ws.setDate(dt.getDate() - dt.getDay() + 1);
+      const k = ws.toISOString().split('T')[0];
+      if (!weeks[k]) weeks[k] = { start: k, spend: 0, clicks: 0, msgs: 0 };
+      weeks[k].spend += d.spend;
+      weeks[k].clicks += d.clicks;
+      weeks[k].msgs += d.msgs;
+    });
+    const weekly = Object.values(weeks).sort((a, b) => a.start.localeCompare(b.start));
 
-    const insights = [];
-    if (weekendAdvantage > 20) {
-      insights.push({ type: 'opportunity', message: `Fines de semana son ${weekendAdvantage}% más baratos por respuesta. Considera aumentar presupuesto sáb/dom.` });
-    }
-    const pauseCandidates = withVerdicts.filter(c => c.verdict === 'PAUSE');
-    if (pauseCandidates.length > 0) {
-      insights.push({ type: 'action', message: `${pauseCandidates.length} campaña(s) deben pausarse: ${pauseCandidates.map(c => c.campaign_name).join(', ')}` });
-    }
-    const scaleCandidates = withVerdicts.filter(c => c.verdict === 'INCREASE_BUDGET');
-    if (scaleCandidates.length > 0) {
-      insights.push({ type: 'action', message: `${scaleCandidates.length} campaña(s) listas para escalar: ${scaleCandidates.map(c => c.campaign_name).join(', ')}` });
-    }
+    const fetchTime = ((Date.now() - t0) / 1000).toFixed(1);
 
     res.json({
-      period: { from: dateFrom, to: dateTo },
-      kpis: {
-        total_spend: Math.round(totalSpend * 100) / 100,
-        messaging_replies: totalReplies,
-        cost_per_reply: Math.round(avgCostPerReply * 100) / 100,
-        ctr: Math.round(avgCtr * 100) / 100,
-        cpm: Math.round(avgCpm * 100) / 100,
-        cpc: Math.round(avgCpc * 1000) / 1000,
-        reach: totalReach,
-        impressions: totalImpressions
-      },
-      campaigns: withVerdicts,
-      day_of_week: dayOfWeek,
-      funnel,
-      insights,
-      weekend_advantage: weekendAdvantage
+      period: { sd: dateFrom, ed: dateTo },
+      camps, ads, days, dowS, funnel, weekly,
+      totals: { tSpend, tMsgs, tClicks, tImps, tReach, avgCPR, bCTR, bCPM },
+      fetchTime
     });
   } catch (e) {
     console.error('Analytics error:', e.message);
@@ -696,6 +725,39 @@ app.get('/api/alerts', (req, res) => {
 app.patch('/api/alerts/:id/resolve', (req, res) => {
   run('UPDATE alerts SET resolved = 1 WHERE id = ?', [parseInt(req.params.id)]);
   res.json({ ok: true });
+});
+
+// --- Existing Posts (for "Use existing post" ad creation) ---
+app.get('/api/page-posts', async (req, res) => {
+  try {
+    const pageSetting = get("SELECT value FROM settings WHERE key = 'page_id'");
+    let pageId = pageSetting?.value;
+    if (!pageId) {
+      const pagesResult = extractText(await mcpCall('get_account_pages', { account_id: AD_ACCOUNT_ID }));
+      pageId = pagesResult?.data?.[0]?.id;
+      if (pageId) run("INSERT INTO settings (key, value) VALUES ('page_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [pageId]);
+    }
+    if (!pageId) return res.json([]);
+
+    // Fetch recent page posts via Graph API through Pipeboard
+    // Use the pipeboard proxy to get posts
+    const postsResult = extractText(await mcpCall('get_ad_creatives', { ad_id: 'none' }));
+    // Fallback: return page info so user can enter post ID manually
+    res.json({ page_id: pageId, note: 'Enter post ID manually or select from Instagram' });
+  } catch (e) {
+    res.json({ page_id: null, error: e.message });
+  }
+});
+
+app.get('/api/ig-posts', async (req, res) => {
+  try {
+    // Get Instagram accounts linked to the ad account
+    const igResult = extractText(await mcpCall('get_instagram_accounts', { account_id: AD_ACCOUNT_ID }));
+    const igAccounts = igResult?.data || igResult || [];
+    res.json(Array.isArray(igAccounts) ? igAccounts : [igAccounts]);
+  } catch (e) {
+    res.json({ error: e.message });
+  }
 });
 
 // --- Settings ---
@@ -1717,7 +1779,39 @@ app.post('/api/bulk-publish', async (req, res) => {
             try {
               console.log(`      Creating ad: ${ad.name} [${ad.format || 'single'}]`);
 
-              // Get image assets from ad.assets (v2.0) or fallback to ad.creative.image_url (v1)
+              // ═══ USE EXISTING POST ═══
+              if (ad.object_story_id) {
+                console.log(`        Using existing post: ${ad.object_story_id}`);
+                let creativeId = null;
+                try {
+                  const cr = extractText(await mcpCall('create_ad_creative', {
+                    account_id: AD_ACCOUNT_ID,
+                    name: ad.name + '_existing_post',
+                    object_story_id: ad.object_story_id
+                  }));
+                  creativeId = cr?.id || cr?.creative_id;
+                  if (creativeId) console.log(`        Creative from post: ${creativeId}`);
+                } catch (e) { console.log(`        Post creative failed: ${e.message}`); }
+
+                if (creativeId) {
+                  const adResult = extractText(await mcpCall('create_ad', {
+                    account_id: AD_ACCOUNT_ID, adset_id: adsetId,
+                    name: ad.name, status: 'PAUSED', creative_id: creativeId
+                  }));
+                  const adId = adResult?.id;
+                  if (adId) {
+                    adResults.push({ name: ad.name, id: adId, creative_id: creativeId, source: 'existing_post' });
+                    console.log(`        Ad created from post: ${adId}`);
+                  } else {
+                    adResults.push({ name: ad.name, error: JSON.stringify(adResult).slice(0, 150) });
+                  }
+                } else {
+                  adResults.push({ name: ad.name, error: 'Failed to create creative from post' });
+                }
+                continue;
+              }
+
+              // ═══ CREATE NEW AD FROM ASSETS ═══
               const adAssets = ad.assets || [];
               const imageAssets = adAssets.filter(a => a.type === 'image' || a.type === 'ig_post');
               const fallbackUrl = ad.creative?.image_url;

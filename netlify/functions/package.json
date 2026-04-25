@@ -1,0 +1,4 @@
+{
+  "//": "Forces CommonJS for Netlify Functions even though root package.json has type:module. Lets us use require() to match the @neondatabase/serverless docs and the existing nancy-tracker code style.",
+  "type": "commonjs"
+}
