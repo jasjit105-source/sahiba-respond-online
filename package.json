@@ -10,7 +10,9 @@
     "seed": "node db/seed.js",
     "start": "concurrently \"npm run server\" \"npm run dev\"",
     "netlify:dev": "netlify dev",
-    "netlify:build": "netlify build"
+    "netlify:build": "netlify build",
+    "migrate": "node db/migrate-to-neon.js",
+    "migrate:force": "node db/migrate-to-neon.js --force"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.9.5",
