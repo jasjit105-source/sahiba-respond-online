@@ -5,8 +5,8 @@ import { CITY_TIERS, STRUCTURE_DEFAULTS } from '../utils/constants';
 import { fmtMoney } from '../utils/format';
 
 const AD_MODES = [
-  { value: 'new', label: 'Crear anuncio nuevo', desc: 'Sube imágenes/videos desde tu Media Library', icon: '\u{1F4F7}' },
-  { value: 'existing_post', label: 'Usar publicación existente', desc: 'Promociona un post de Facebook o Instagram Reel', icon: '\u{1F4F1}' },
+  { value: 'new', label: 'Create new ad', desc: 'Upload images/videos from your Media Library', icon: '\u{1F4F7}' },
+  { value: 'existing_post', label: 'Use existing post', desc: 'Promote a Facebook post or Instagram Reel', icon: '\u{1F4F1}' },
 ];
 
 export default function BulkCreate() {
@@ -80,8 +80,8 @@ export default function BulkCreate() {
     if (adMode === 'existing_post') {
       // Build campaign from existing posts
       const validPosts = postIds.filter(p => p.trim());
-      if (validPosts.length === 0) return alert('Ingresa al menos un Post ID');
-      if (selectedTiers.length === 0) return alert('Selecciona al menos un tier');
+      if (validPosts.length === 0) return alert('Enter at least one Post ID');
+      if (selectedTiers.length === 0) return alert('Select at least one tier');
       setPhase('generating');
 
       // Build campaign structure with existing posts as ads
@@ -104,7 +104,7 @@ export default function BulkCreate() {
           cities: tier.cities,
           cities_summary: tier.cities.map(c => c.name).join(', '),
           cities_count: tier.cities.length,
-          audience: { desc: `Mujeres 25+, Español — ${tier.cities.map(c => c.name).join(', ')}` },
+          audience: { desc: `Women 25+, Spanish — ${tier.cities.map(c => c.name).join(', ')}` },
           ads: validPosts.map((postId, i) => {
             // Format: {page_id}_{post_id} or just post_id
             const storyId = postId.includes('_') ? postId : `${pageId}_${postId}`;
@@ -133,7 +133,7 @@ export default function BulkCreate() {
         total_daily_budget: totalDailyBudget,
         budget_cap: totalBudget,
         media_summary: { active: validPosts.length },
-        targeting: { age: '25-65', gender: 'Mujeres', language: 'Solo Español', objective: 'Engagement' },
+        targeting: { age: '25-65', gender: 'Women', language: 'Spanish only', objective: 'Engagement' },
         duplicate_warnings: [],
         campaign: {
           name: `MX_WhatsApp_${productName}_${date}`,
@@ -144,7 +144,7 @@ export default function BulkCreate() {
           special_ad_categories: [],
           adsets,
           copy: { hooks: ['Existing post'], primaryTexts: ['Existing post'], headlines: ['Existing post'], ctas: ['WHATSAPP_MESSAGE'] },
-          targeting_summary: `Mujeres 25+, Español, ${adsets.length} ad sets, ${totalAds} ads`
+          targeting_summary: `Women 25+, Spanish, ${adsets.length} ad sets, ${totalAds} ads`
         }
       });
       setPhase('review');
@@ -152,8 +152,8 @@ export default function BulkCreate() {
     }
 
     // Normal mode: create from media
-    if (selected.size === 0) return alert('Selecciona al menos un asset');
-    if (selectedTiers.length === 0) return alert('Selecciona al menos un tier');
+    if (selected.size === 0) return alert('Select at least one asset');
+    if (selectedTiers.length === 0) return alert('Select at least one tier');
     setPhase('generating');
     try {
       const data = await api.aiGenerate({
@@ -170,7 +170,7 @@ export default function BulkCreate() {
   };
 
   const handlePublish = async () => {
-    if (!confirm(`Publicar 1 campaña con ${result.total_adsets} ad sets y ${result.total_ads} ads como BORRADOR?\n\nFormato: ${result.ad_format}\nPresupuesto: $${result.total_daily_budget}/día\n\nNada se activa hasta que lo hagas manualmente.`)) return;
+    if (!confirm(`Publish 1 campaign with ${result.total_adsets} ad sets and ${result.total_ads} ads as DRAFT?\n\nFormat: ${result.ad_format}\nBudget: $${result.total_daily_budget}/day\n\nNothing goes live until you do it manually.`)) return;
     setPublishing(true); setPhase('publishing');
     try {
       const res = await api.bulkPublish({ campaign: result.campaign });
@@ -185,11 +185,11 @@ export default function BulkCreate() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Crear Campañas</h2>
-          <p className="text-sm text-gray-500">{phase === 'select' ? 'Selecciona media, configura, AI construye' : phase === 'review' ? 'Revisa y aprueba' : ''}</p>
+          <h2 className="text-xl font-bold">Create Campaigns</h2>
+          <p className="text-sm text-gray-500">{phase === 'select' ? 'Select media, configure, AI builds' : phase === 'review' ? 'Review and approve' : ''}</p>
         </div>
         {phase !== 'select' && phase !== 'generating' && (
-          <button onClick={reset} className="px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-200">Volver</button>
+          <button onClick={reset} className="px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-200">Back</button>
         )}
       </div>
 
@@ -216,7 +216,7 @@ export default function BulkCreate() {
               <div>
                 <h3 className="text-sm font-bold mb-1">Post IDs</h3>
                 <p className="text-xs text-gray-500 mb-3">
-                  Pega el ID de tu publicación de Facebook o Instagram. Formato: <code className="bg-gray-100 px-1 rounded">page_id_post_id</code> o solo <code className="bg-gray-100 px-1 rounded">post_id</code>
+                  Paste your Facebook or Instagram post ID. Format: <code className="bg-gray-100 px-1 rounded">page_id_post_id</code> or just <code className="bg-gray-100 px-1 rounded">post_id</code>
                 </p>
                 {postIds.map((pid, i) => (
                   <div key={i} className="flex gap-2 mb-2">
@@ -228,7 +228,7 @@ export default function BulkCreate() {
                     )}
                   </div>
                 ))}
-                <button onClick={() => setPostIds([...postIds, ''])} className="text-xs text-fb font-semibold hover:underline">+ Agregar otro post</button>
+                <button onClick={() => setPostIds([...postIds, ''])} className="text-xs text-fb font-semibold hover:underline">+ Add another post</button>
               </div>
 
               {pageId && (
@@ -241,15 +241,15 @@ export default function BulkCreate() {
               )}
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 space-y-1">
-                <p><b>¿Cómo encontrar el Post ID?</b></p>
-                <p>1. Abre tu publicación en Facebook/Instagram</p>
-                <p>2. Copia la URL — el número al final es el post_id</p>
-                <p>3. Formato completo: <code>{pageId || '514164875351531'}_POST_ID</code></p>
+                <p><b>How to find the Post ID?</b></p>
+                <p>1. Open your post on Facebook/Instagram</p>
+                <p>2. Copy the URL — the number at the end is the post_id</p>
+                <p>3. Full format: <code>{pageId || '514164875351531'}_POST_ID</code></p>
                 <p>4. Para Instagram Reels: usa el ID del reel compartido en tu Facebook Page</p>
               </div>
 
               <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" value={productHint} onChange={e => setProductHint(e.target.value)}
-                placeholder="Nombre del producto (opcional)" />
+                placeholder="Product name (optional)" />
 
               {/* Tier selection */}
               <div>
@@ -259,7 +259,7 @@ export default function BulkCreate() {
                     <button key={key} onClick={() => setSelectedTiers(prev => prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key])}
                       className={`text-left px-2.5 py-2 rounded-lg border text-xs ${selectedTiers.includes(key) ? 'border-fb bg-blue-50 text-fb' : 'border-gray-200 text-gray-500'}`}>
                       <div className="font-bold">{tier.label}</div>
-                      <div className="text-[10px] text-gray-400">{tier.cities.length} ciudades · ${tier.budget_usd}/día</div>
+                      <div className="text-[10px] text-gray-400">{tier.cities.length} cities · ${tier.budget_usd}/day</div>
                     </button>
                   ))}
                 </div>
@@ -267,7 +267,7 @@ export default function BulkCreate() {
 
               <button onClick={handleGenerate}
                 className="w-full py-3 bg-fb text-white rounded-xl text-sm font-bold hover:bg-fb-dark">
-                Generar {selectedTiers.length} Ad Sets con {postIds.filter(p => p.trim()).length} Post{postIds.filter(p => p.trim()).length > 1 ? 's' : ''}
+                Generate {selectedTiers.length} Ad Sets with {postIds.filter(p => p.trim()).length} Post{postIds.filter(p => p.trim()).length > 1 ? 's' : ''}
               </button>
             </div>
           )}
@@ -276,22 +276,22 @@ export default function BulkCreate() {
           {adMode === 'new' && <>
           {/* Filters */}
           <div className="flex gap-2 flex-wrap items-center">
-            {[{ v: '', l: 'Todos' }, { v: 'image', l: 'Imágenes' }, { v: 'video', l: 'Videos' }, { v: 'ig_post', l: 'IG Posts' }].map(f => (
+            {[{ v: '', l: 'All' }, { v: 'image', l: 'Images' }, { v: 'video', l: 'Videos' }, { v: 'ig_post', l: 'IG Posts' }].map(f => (
               <button key={f.v} onClick={() => setFilter({ ...filter, type: f.v })}
                 className={`px-3 py-1 rounded-full text-xs font-bold ${filter.type === f.v ? 'bg-fb text-white' : 'bg-gray-100 text-gray-600'}`}>{f.l}</button>
             ))}
-            <input className="border border-gray-300 rounded-lg px-2 py-1 text-xs flex-1 max-w-xs" placeholder="Buscar..."
+            <input className="border border-gray-300 rounded-lg px-2 py-1 text-xs flex-1 max-w-xs" placeholder="Search..."
               onChange={e => setFilter({ ...filter, search: e.target.value })} />
             <button onClick={() => setShowAddUrl(true)} className="px-3 py-1 bg-fb text-white rounded-lg text-xs font-bold">+ URLs</button>
             <button onClick={selectAll} className="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold">
-              {selected.size === filteredAssets.length && filteredAssets.length > 0 ? 'Deseleccionar' : 'Seleccionar todo'}
+              {selected.size === filteredAssets.length && filteredAssets.length > 0 ? 'Deselect all' : 'Select all'}
             </button>
           </div>
 
           {/* Grid */}
           {allAssets.length === 0 ? (
             <div className="bg-white rounded-xl border-2 border-dashed border-gray-300 p-12 text-center">
-              <p className="font-semibold text-gray-700">Sin media — ve a Media Library para subir</p>
+              <p className="font-semibold text-gray-700">No media — go to Media Library to upload</p>
             </div>
           ) : (
             <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
@@ -346,7 +346,7 @@ export default function BulkCreate() {
                     ))}
                   </div>
                   <button onClick={() => setShowOptions(!showOptions)} className="text-gray-500 hover:text-fb font-medium">
-                    {showOptions ? 'Ocultar' : 'Más'}
+                    {showOptions ? 'Hide' : 'More'}
                   </button>
                 </div>
               </div>
@@ -354,12 +354,12 @@ export default function BulkCreate() {
               {/* Row 2: Badges + summary */}
               <div className="flex gap-2 flex-wrap items-center">
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">Engagement</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-pink-100 text-pink-700">Mujeres 25+</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700">Solo Español</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-pink-100 text-pink-700">Women 25+</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700">Spanish only</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-green-100 text-green-700">WhatsApp</span>
                 {assetsPerAd > 1 && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-700">Carousel ({assetsPerAd} assets)</span>}
                 <span className="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-500">
-                  {adsetCount} ad sets &middot; {adsPerAdset} ads c/u &middot; {totalAds} ads total &middot; ${totalBudget}/día
+                  {adsetCount} ad sets &middot; {adsPerAdset} ads each &middot; {totalAds} ads total &middot; ${totalBudget}/day
                 </span>
               </div>
 
@@ -367,25 +367,25 @@ export default function BulkCreate() {
               {showOptions && (
                 <div className="border-t border-gray-100 pt-3 space-y-3">
                   <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" value={productHint} onChange={e => setProductHint(e.target.value)}
-                    placeholder="Nombre del producto (opcional)" />
+                    placeholder="Product name (optional)" />
 
                   {/* Budget */}
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-gray-600">Presupuesto diario total:</span>
+                    <span className="text-xs font-semibold text-gray-600">Total daily budget:</span>
                     <input type="number" className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-20" value={totalBudget}
                       onChange={e => setTotalBudget(Math.min(200, Math.max(10, parseInt(e.target.value) || 100)))} />
-                    <span className="text-xs text-gray-500">USD (máx $200)</span>
+                    <span className="text-xs text-gray-500">USD (max $200)</span>
                   </div>
 
                   {/* Tiers */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-600 mb-1.5">Ad Sets (1 por tier):</p>
+                    <p className="text-xs font-semibold text-gray-600 mb-1.5">Ad Sets (1 per tier):</p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
                       {Object.entries(CITY_TIERS).map(([key, tier]) => (
                         <button key={key} onClick={() => toggleTier(key)}
                           className={`text-left px-2.5 py-2 rounded-lg border text-xs ${selectedTiers.includes(key) ? 'border-fb bg-blue-50 text-fb' : 'border-gray-200 text-gray-500'}`}>
                           <div className="font-bold">{tier.label}</div>
-                          <div className="text-[10px] text-gray-400">{tier.cities.length} ciudades &middot; ${tier.budget_usd}/día</div>
+                          <div className="text-[10px] text-gray-400">{tier.cities.length} cities &middot; ${tier.budget_usd}/day</div>
                         </button>
                       ))}
                     </div>
@@ -394,7 +394,7 @@ export default function BulkCreate() {
               )}
 
               <button onClick={handleGenerate} className="w-full py-3 bg-fb text-white rounded-xl text-sm font-bold hover:bg-fb-dark">
-                Generar {adsetCount} Ad Sets &middot; {totalAds} Ads {assetsPerAd > 1 ? `(${format})` : ''} &middot; ${totalBudget}/día
+                Generate {adsetCount} Ad Sets &middot; {totalAds} Ads {assetsPerAd > 1 ? `(${format})` : ''} &middot; ${totalBudget}/day
               </button>
             </div>
           )}
@@ -403,13 +403,13 @@ export default function BulkCreate() {
           {showAddUrl && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={e => { if (e.target === e.currentTarget) setShowAddUrl(false); }}>
               <div className="bg-white rounded-xl w-[90%] max-w-lg shadow-2xl">
-                <div className="flex items-center justify-between px-5 py-4 border-b"><h3 className="font-bold">Agregar Media</h3><button onClick={() => setShowAddUrl(false)} className="text-gray-400 text-xl">&times;</button></div>
+                <div className="flex items-center justify-between px-5 py-4 border-b"><h3 className="font-bold">Add Media</h3><button onClick={() => setShowAddUrl(false)} className="text-gray-400 text-xl">&times;</button></div>
                 <div className="p-5">
-                  <textarea className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-32 font-mono" value={addUrlText} onChange={e => setAddUrlText(e.target.value)} placeholder="URLs (una por línea)" />
+                  <textarea className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-32 font-mono" value={addUrlText} onChange={e => setAddUrlText(e.target.value)} placeholder="URLs (one per line)" />
                 </div>
                 <div className="px-5 py-3 border-t flex justify-end gap-2">
-                  <button onClick={() => setShowAddUrl(false)} className="px-4 py-2 bg-gray-100 rounded-lg text-sm font-semibold">Cancelar</button>
-                  <button onClick={handleAddUrls} className="px-4 py-2 bg-fb text-white rounded-lg text-sm font-semibold">Agregar</button>
+                  <button onClick={() => setShowAddUrl(false)} className="px-4 py-2 bg-gray-100 rounded-lg text-sm font-semibold">Cancel</button>
+                  <button onClick={handleAddUrls} className="px-4 py-2 bg-fb text-white rounded-lg text-sm font-semibold">Add</button>
                 </div>
               </div>
             </div>
@@ -422,7 +422,7 @@ export default function BulkCreate() {
       {phase === 'generating' && (
         <div className="bg-white rounded-xl border p-12 text-center">
           <div className="w-10 h-10 border-4 border-gray-200 border-t-fb rounded-full animate-spin mx-auto mb-4" />
-          <p className="font-semibold">AI construyendo campaña...</p>
+          <p className="font-semibold">AI building campaign...</p>
         </div>
       )}
 
@@ -433,17 +433,17 @@ export default function BulkCreate() {
           <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-200 p-5">
             <h3 className="text-base font-bold mb-3">{result.campaign.name}</h3>
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-              <div><div className="text-[10px] font-bold text-gray-500 uppercase">Producto</div><div className="text-sm font-bold">{result.product}</div></div>
+              <div><div className="text-[10px] font-bold text-gray-500 uppercase">Product</div><div className="text-sm font-bold">{result.product}</div></div>
               <div><div className="text-[10px] font-bold text-gray-500 uppercase">Media</div><div className="text-sm font-bold">{result.media_summary.active} assets</div></div>
               <div><div className="text-[10px] font-bold text-gray-500 uppercase">Ad Sets</div><div className="text-sm font-bold">{result.total_adsets}</div></div>
               <div><div className="text-[10px] font-bold text-gray-500 uppercase">Ads</div><div className="text-sm font-bold">{result.total_ads}</div></div>
-              <div><div className="text-[10px] font-bold text-gray-500 uppercase">Formato</div><div className="text-sm font-bold">{result.ad_format === 'carousel' ? `Carousel (${result.assets_per_ad})` : 'Single'}</div></div>
-              <div><div className="text-[10px] font-bold text-gray-500 uppercase">Presupuesto</div><div className="text-sm font-bold">${result.total_daily_budget}/día</div></div>
+              <div><div className="text-[10px] font-bold text-gray-500 uppercase">Format</div><div className="text-sm font-bold">{result.ad_format === 'carousel' ? `Carousel (${result.assets_per_ad})` : 'Single'}</div></div>
+              <div><div className="text-[10px] font-bold text-gray-500 uppercase">Budget</div><div className="text-sm font-bold">${result.total_daily_budget}/day</div></div>
             </div>
             <div className="flex gap-2 mt-3">
               <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">Engagement</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-pink-100 text-pink-700">Mujeres 25+</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700">Solo Español</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-pink-100 text-pink-700">Women 25+</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700">Spanish only</span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-green-100 text-green-700">WhatsApp</span>
             </div>
           </div>
@@ -465,7 +465,7 @@ export default function BulkCreate() {
                   <div>
                     <div className="text-sm font-bold">{adset.name}</div>
                     <div className="text-[11px] text-gray-500">
-                      {adset.cities_count} ciudades &middot; ${adset.daily_budget}/día &middot; {adset.ads.length} ads
+                      {adset.cities_count} cities &middot; ${adset.daily_budget}/day &middot; {adset.ads.length} ads
                       {adset.ads[0]?.format === 'carousel' ? ` (carousel ${adset.ads[0].assets.length} assets)` : ''}
                     </div>
                   </div>
@@ -493,7 +493,7 @@ export default function BulkCreate() {
                       <div className="flex items-center gap-2 mb-1.5">
                         <span className="text-xs font-bold">{ad.name}</span>
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${ad.format === 'existing_post' ? 'bg-gradient-to-r from-pink-100 to-orange-100 text-pink-700' : ad.format === 'carousel' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                          {ad.format === 'existing_post' ? `Post existente` : ad.format === 'carousel' ? `Carousel (${ad.assets.length})` : 'Single'}
+                          {ad.format === 'existing_post' ? `Existing post` : ad.format === 'carousel' ? `Carousel (${ad.assets.length})` : 'Single'}
                         </span>
                       </div>
                       <div className="flex gap-1.5 flex-wrap">
@@ -521,9 +521,9 @@ export default function BulkCreate() {
 
           {/* Publish */}
           <div className="flex gap-3 sticky bottom-4">
-            <button onClick={reset} className="px-6 py-3 bg-gray-100 text-gray-700 rounded-xl text-sm font-semibold">Descartar</button>
+            <button onClick={reset} className="px-6 py-3 bg-gray-100 text-gray-700 rounded-xl text-sm font-semibold">Discard</button>
             <button onClick={handlePublish} disabled={publishing} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-base font-bold hover:bg-green-700 disabled:opacity-50">
-              Publicar BORRADOR &middot; {result.total_adsets} Ad Sets &middot; {result.total_ads} Ads &middot; ${result.total_daily_budget}/día
+              Publish DRAFT &middot; {result.total_adsets} Ad Sets &middot; {result.total_ads} Ads &middot; ${result.total_daily_budget}/day
             </button>
           </div>
         </div>
@@ -541,7 +541,7 @@ export default function BulkCreate() {
       {phase === 'done' && publishResult && (
         <div className="space-y-4">
           <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-            <h3 className="text-base font-bold text-green-800">Campaña publicada como borrador</h3>
+            <h3 className="text-base font-bold text-green-800">Campaign published as draft</h3>
           </div>
           {publishResult.results?.map((r, i) => (
             <div key={i} className={`px-4 py-3 rounded-lg ${r.error ? 'bg-red-50' : 'bg-green-50'}`}>
@@ -549,7 +549,7 @@ export default function BulkCreate() {
               {r.error && <span className="text-xs text-red-600 ml-2">{r.error}</span>}
             </div>
           ))}
-          <button onClick={reset} className="px-6 py-3 bg-fb text-white rounded-xl text-sm font-bold">Crear más</button>
+          <button onClick={reset} className="px-6 py-3 bg-fb text-white rounded-xl text-sm font-bold">Create more</button>
         </div>
       )}
     </div>

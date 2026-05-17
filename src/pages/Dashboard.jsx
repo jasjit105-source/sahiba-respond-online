@@ -16,6 +16,7 @@ function gp(p) {
     case '14d': s = new Date(t - 14 * 864e5); break;
     case '30d': s = new Date(t - 30 * 864e5); break;
     case '90d': s = new Date(t - 90 * 864e5); break;
+    case '120d': s = new Date(t - 120 * 864e5); break;
     case 'this_month': s = new Date(t.getFullYear(), t.getMonth(), 1); break;
     case 'last_month': {
       const l = new Date(t.getFullYear(), t.getMonth() - 1, 1);
@@ -169,10 +170,54 @@ main { max-width: none !important; padding: 0 !important; }
 `;
 
 // ═══ OVERVIEW TAB ═══
-function OverviewTab({ camps, avgCPR, funnel, weekly }) {
+function OverviewTab({ camps, avgCPR, funnel, weekly, totals, dowRich, ads, nDays }) {
   const maxWS = Math.max(...weekly.map(w => w.spend), 1);
+
+  // Build action center
+  const scale = camps.filter(c => c.verdict && (c.verdict.label.includes('SCALE') || c.verdict.label === 'REACTIVATE'));
+  const cut = camps.filter(c => c.verdict && (c.verdict.label.includes('CUT') || c.verdict.label === 'PAUSE'));
+  const reduce = camps.filter(c => c.verdict && c.verdict.label === 'REDUCE');
+  const validDays = dowRich?.rows?.filter(r => !r.noData && r.cpr != null) || [];
+  const bestDay = validDays.length ? validDays.slice().sort((a, b) => a.cpr - b.cpr)[0] : null;
+  const worstDay = validDays.length ? validDays.slice().sort((a, b) => b.cpr - a.cpr)[0] : null;
+  const replyRate = funnel.connections > 0 ? (funnel.firstReply / funnel.connections * 100) : 0;
+  const depthRate = funnel.connections > 0 ? (funnel.depth5 / funnel.connections * 100) : 0;
+
+  const actions = [];
+  if (scale.length) actions.push({ cls: 'inc', icon: '↑', t: `Scale ${scale.length} campaign${scale.length > 1 ? 's' : ''}`, d: scale.slice(0, 3).map(c => c.name).join(', ') + (scale.length > 3 ? '…' : '') });
+  if (cut.length) actions.push({ cls: 'dec', icon: '✕', t: `Pause/Cut ${cut.length} campaign${cut.length > 1 ? 's' : ''}`, d: cut.slice(0, 3).map(c => c.name).join(', ') + (cut.length > 3 ? '…' : '') });
+  if (reduce.length) actions.push({ cls: 'pau', icon: '↓', t: `Reduce ${reduce.length} campaign${reduce.length > 1 ? 's' : ''}`, d: reduce.slice(0, 3).map(c => c.name).join(', ') });
+  if (bestDay && worstDay && bestDay.day !== worstDay.day) actions.push({ cls: 'inc', icon: '★', t: `Best day: ${bestDay.day}`, d: `$${bestDay.cpr.toFixed(2)}/reply vs $${worstDay.cpr.toFixed(2)} on ${worstDay.day}. Reallocate budget toward ${bestDay.day}.` });
+  if (replyRate > 0 && replyRate < 50) actions.push({ cls: 'pau', icon: '!', t: `Low reply rate (${replyRate.toFixed(0)}%)`, d: 'People connect but do not reply. Check your WhatsApp welcome message.' });
+  if (!actions.length) actions.push({ cls: 'mon', icon: '✓', t: 'All clear', d: 'No urgent actions. Keep monitoring.' });
+
   return (
     <div>
+      {/* KPI strip */}
+      {totals && (
+        <div className="kr" style={{ marginBottom: '1.5rem' }}>
+          <div className="k"><div className="l">Cost / Reply</div><div className="v" style={{ color: avgCPR < 2 ? 'var(--grn)' : avgCPR > 4 ? 'var(--red)' : 'var(--at)' }}>{$(avgCPR)}</div><div className="s">North-star metric</div></div>
+          <div className="k"><div className="l">Replies</div><div className="v">{fmt(totals.tMsgs)}</div><div className="s">{fmt(totals.tMsgs / nDays, 1)}/day</div></div>
+          <div className="k"><div className="l">Reply Rate</div><div className="v" style={{ color: replyRate > 65 ? 'var(--grn)' : replyRate < 50 ? 'var(--red)' : 'var(--at)' }}>{pct(replyRate, 0)}</div><div className="s">connect → reply</div></div>
+          <div className="k"><div className="l">Deep Conversation</div><div className="v" style={{ color: depthRate > 35 ? 'var(--grn)' : 'var(--at)' }}>{pct(depthRate, 0)}</div><div className="s">5+ messages</div></div>
+          <div className="k"><div className="l">Total Spend</div><div className="v">{$(totals.tSpend, 0)}</div><div className="s">~{$(totals.tSpend / nDays, 0)}/day</div></div>
+          <div className="k"><div className="l">Best Day</div><div className="v" style={{ fontSize: '1.15rem', color: 'var(--grn)' }}>{bestDay ? bestDay.day : '—'}</div><div className="s">{bestDay ? '$' + bestDay.cpr.toFixed(2) + '/reply' : 'no data'}</div></div>
+        </div>
+      )}
+
+      {/* Action center */}
+      <div className="sec">
+        <h2 className="sh">Action Center — What To Do Now</h2>
+        <div className="vds">
+          {actions.map((a, i) => (
+            <div className="vd" key={i} style={{ borderLeft: `3px solid ${a.cls === 'inc' ? 'var(--grn)' : a.cls === 'dec' ? 'var(--red)' : a.cls === 'pau' ? 'var(--org)' : 'var(--pur)'}` }}>
+              <span className={`tag ${a.cls}`}>{a.icon} {a.t}</span>
+              <p style={{ marginTop: '.5rem' }}>{a.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="sec">
         <h2 className="sh">Budget Verdicts</h2>
         <div className="vds">
@@ -717,6 +762,633 @@ function DepthTab({ ads }) {
 }
 
 // ═══ DAY OF WEEK TAB ═══
+// ═══ BEST DAYS TAB ═══
+function BestDaysTab({ dowRich }) {
+  if (!dowRich || !dowRich.rows) {
+    return <div className="es"><h2>Not enough data</h2><p>Pick a 30, 90 or 120-day range to see which weekdays perform best.</p></div>;
+  }
+  const { rows, periodAvgCPR, bestDays, worstDays, budgetPlan, lookbackDays } = dowRich;
+  const valid = rows.filter(r => !r.noData && r.cpr != null);
+  if (valid.length === 0) {
+    return <div className="es"><h2>No replies recorded</h2><p>No messaging data in this period. Widen the date range.</p></div>;
+  }
+
+  // Order Mon→Sun for display
+  const order = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const ordered = order.map(d => rows.find(r => r.day === d)).filter(Boolean);
+  const bestRow = valid.slice().sort((a, b) => a.cpr - b.cpr)[0];
+  const worstRow = valid.slice().sort((a, b) => b.cpr - a.cpr)[0];
+
+  return (
+    <div>
+      {/* Hero recommendation */}
+      <div className="sec">
+        <h2 className="sh">Best Days To Invest</h2>
+        <p style={{ fontSize: '.8rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+          Based on {lookbackDays} days with spend. Average cost per reply is <b style={{ color: 'var(--at)' }}>${periodAvgCPR ? periodAvgCPR.toFixed(2) : '—'}</b>.
+        </p>
+        <div className="compare-grid">
+          <div className="compare-card" style={{ borderColor: 'rgba(74,222,128,.4)' }}>
+            <div className="cl">Best day</div>
+            <div className="cv" style={{ color: 'var(--grn)' }}>{bestRow.day}</div>
+            <div style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.3rem' }}>${bestRow.cpr.toFixed(2)}/reply · {fmt(bestRow.avgMsgs, 1)} msgs/day</div>
+          </div>
+          <div className="compare-card" style={{ borderColor: 'rgba(248,113,113,.4)' }}>
+            <div className="cl">Worst day</div>
+            <div className="cv" style={{ color: 'var(--red)' }}>{worstRow.day}</div>
+            <div style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.3rem' }}>${worstRow.cpr.toFixed(2)}/reply · {fmt(worstRow.avgMsgs, 1)} msgs/day</div>
+          </div>
+          <div className="compare-card">
+            <div className="cl">Days to scale</div>
+            <div className="cv" style={{ color: 'var(--grn)', fontSize: '1rem' }}>{bestDays.join(', ')}</div>
+          </div>
+          <div className="compare-card">
+            <div className="cl">Days to pause</div>
+            <div className="cv" style={{ color: 'var(--red)', fontSize: '1rem' }}>{worstDays.join(', ')}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Weekday table */}
+      <div className="sec">
+        <h2 className="sh">Performance By Day Of Week</h2>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="r">Weeks</th>
+                <th className="r">Spend/Day</th>
+                <th className="r">Messages/Day</th>
+                <th className="r">Connections/Day</th>
+                <th className="r">$/Reply</th>
+                <th className="r">Reply %</th>
+                <th style={{ width: '110px' }}>Efficiency</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ordered.map(d => {
+                if (d.noData || d.cpr == null) return (
+                  <tr key={d.day}><td style={{ fontWeight: 600 }}>{d.day}</td><td colSpan="8" style={{ color: 'var(--at3)', fontSize: '.78rem' }}>No data</td></tr>
+                );
+                const isBest = d.day === bestRow.day;
+                const isWorst = d.day === worstRow.day;
+                return (
+                  <tr key={d.day}>
+                    <td style={{ fontWeight: 600 }}>{d.day} {isBest && '⭐'}</td>
+                    <td className="r">{d.weeks}</td>
+                    <td className="r">{$(d.avgSpend, 0)}</td>
+                    <td className="r">{fmt(d.avgMsgs, 1)}</td>
+                    <td className="r">{fmt(d.avgConnections, 1)}</td>
+                    <td className={`r ${isBest ? 'best' : isWorst ? 'worst' : ''}`}>{$(d.cpr)}</td>
+                    <td className="r">{pct(d.replyRate, 0)}</td>
+                    <td><div className="bt" style={{ width: '100px' }}><div className={`bf ${d.score > 66 ? 'g' : d.score > 33 ? 'o' : 'r'}`} style={{ width: Math.max(5, d.score) + '%' }}></div></div></td>
+                    <td><span className={`tag ${d.actionCls}`}>{d.action}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Budget reallocation plan */}
+      <div className="sec">
+        <h2 className="sh">Budget Reallocation Plan</h2>
+        <p style={{ fontSize: '.8rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+          Same total budget, shifted toward the cheaper days. Use this to set your ad scheduling.
+        </p>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="r">Current Spend (total)</th>
+                <th className="r">Suggested Spend</th>
+                <th className="r">Change</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.map(dayName => {
+                const b = budgetPlan.find(x => x.day === dayName);
+                const r = rows.find(x => x.day === dayName);
+                if (!b || !r || r.noData) return null;
+                const up = b.change > 0;
+                return (
+                  <tr key={dayName}>
+                    <td style={{ fontWeight: 600 }}>{dayName}</td>
+                    <td className="r">{$(b.current, 0)}</td>
+                    <td className="r" style={{ fontWeight: 600 }}>{$(b.suggested, 0)}</td>
+                    <td className={`r delta ${up ? 'up' : b.change < 0 ? 'dn' : 'flat'}`}>{up ? '+' : ''}{$(b.change, 0)}</td>
+                    <td style={{ fontSize: '.78rem', color: 'var(--at2)' }}>{r.rec || '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="snap-info" style={{ marginTop: '1rem' }}>
+          <b>How to apply this:</b> In Meta Ads Manager → Ad Set → "Ad Scheduling" (requires lifetime budget).
+          Run ads only on the green days and pause or reduce the red days. This lowers your cost per reply without spending more.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ HOUR OF DAY TAB ═══
+function fmtRange(hrs) {
+  if (!hrs || !hrs.length) return '—';
+  const s = [...hrs].sort((a, b) => a - b);
+  const ranges = [];
+  let start = s[0], prev = s[0];
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] === prev + 1) { prev = s[i]; continue; }
+    ranges.push([start, prev]); start = s[i]; prev = s[i];
+  }
+  ranges.push([start, prev]);
+  return ranges.map(([a, b]) => `${String(a).padStart(2,'0')}:00–${String((b+1)%24).padStart(2,'0')}:00`).join(', ');
+}
+
+function HourTab({ hourRich }) {
+  if (!hourRich || !hourRich.rows) {
+    return <div className="es"><h2>No hourly data</h2><p>Meta did not return an hourly breakdown for this period. Try a 14 or 30-day range, or check the Pipeboard connection.</p></div>;
+  }
+  const { rows, avgCPR, bestHours, worstHours, onHours, offHours, dataDays } = hourRich;
+  const valid = rows.filter(r => r.cpr != null);
+  if (!valid.length) return <div className="es"><h2>No replies by hour</h2><p>No messaging replies recorded by hour in this period.</p></div>;
+
+  const maxSpend = Math.max(...rows.map(r => r.spend), 1);
+  const tierColor = { prime: 'var(--grn)', ok: 'var(--blu)', weak: 'var(--org)', dead: 'var(--red)', none: 'var(--at3)' };
+  const tierLabel = { prime: 'PRIME', ok: 'OK', weak: 'WEAK', dead: 'DEAD', none: 'NO DATA' };
+
+  return (
+    <div>
+      <div className="sec">
+        <h2 className="sh">Best Hours To Run Ads</h2>
+        <p style={{ fontSize: '.8rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+          Hour of day in your account timezone, across {dataDays} days. Average cost per reply is <b style={{ color: 'var(--at)' }}>${avgCPR ? avgCPR.toFixed(2) : '—'}</b>.
+        </p>
+        <div className="compare-grid">
+          <div className="compare-card" style={{ borderColor: 'rgba(74,222,128,.4)' }}>
+            <div className="cl">Cheapest hours</div>
+            <div className="cv" style={{ color: 'var(--grn)', fontSize: '1rem' }}>{bestHours.join(', ')}</div>
+          </div>
+          <div className="compare-card" style={{ borderColor: 'rgba(248,113,113,.4)' }}>
+            <div className="cl">Most expensive hours</div>
+            <div className="cv" style={{ color: 'var(--red)', fontSize: '1rem' }}>{worstHours.join(', ')}</div>
+          </div>
+          <div className="compare-card">
+            <div className="cl">Suggested ON window</div>
+            <div className="cv" style={{ color: 'var(--grn)', fontSize: '.85rem' }}>{fmtRange(onHours)}</div>
+          </div>
+          <div className="compare-card">
+            <div className="cl">Suggested OFF window</div>
+            <div className="cv" style={{ color: 'var(--red)', fontSize: '.85rem' }}>{fmtRange(offHours)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 24h efficiency strip */}
+      <div className="sec">
+        <h2 className="sh">24-Hour Efficiency</h2>
+        <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '120px', padding: '0 0 1.5rem' }}>
+          {rows.map(r => (
+            <div key={r.hour} title={`${r.label} · $${r.cpr ? r.cpr.toFixed(2) : '—'}/reply · ${r.msgs} msgs`}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+              <div style={{
+                width: '100%',
+                height: Math.max(4, (r.score / 100) * 90) + 'px',
+                background: tierColor[r.tier] || 'var(--at3)',
+                borderRadius: '3px 3px 0 0',
+                opacity: r.cpr == null ? 0.25 : 1
+              }} />
+              <span style={{ fontSize: '.55rem', color: 'var(--at3)' }}>{String(r.hour).padStart(2,'0')}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: '1rem', fontSize: '.7rem', color: 'var(--at2)' }}>
+          <span><b style={{ color: 'var(--grn)' }}>■</b> Prime</span>
+          <span><b style={{ color: 'var(--blu)' }}>■</b> OK</span>
+          <span><b style={{ color: 'var(--org)' }}>■</b> Weak</span>
+          <span><b style={{ color: 'var(--red)' }}>■</b> Dead</span>
+        </div>
+      </div>
+
+      {/* Hour table */}
+      <div className="sec">
+        <h2 className="sh">Hour-By-Hour Breakdown</h2>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>Hour</th>
+                <th className="r">Spend</th>
+                <th className="r">Clicks</th>
+                <th className="r">Replies</th>
+                <th className="r">$/Reply</th>
+                <th className="r">Reply %</th>
+                <th style={{ width: '110px' }}>Spend share</th>
+                <th>Tier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.hour}>
+                  <td style={{ fontWeight: 600 }}>{r.label}</td>
+                  <td className="r">{$(r.spend, 0)}</td>
+                  <td className="r">{fmt(r.clicks)}</td>
+                  <td className="r">{fmt(r.msgs)}</td>
+                  <td className={`r ${r.tier === 'prime' ? 'best' : r.tier === 'dead' ? 'worst' : ''}`}>{r.cpr != null ? $(r.cpr) : '—'}</td>
+                  <td className="r">{pct(r.replyRate, 0)}</td>
+                  <td><div className="bt" style={{ width: '100px' }}><div className="bf o" style={{ width: Math.max(2, r.spend / maxSpend * 100) + '%' }}></div></div></td>
+                  <td><span className="tag" style={{ background: 'rgba(255,255,255,.06)', color: tierColor[r.tier] }}>{tierLabel[r.tier]}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="snap-info" style={{ marginTop: '1rem' }}>
+          <b>How to use this:</b> Go to the <b>Schedule</b> tab to apply an automatic on/off schedule based on these hours,
+          or set it manually in Meta Ads Manager → Ad Set → Ad Scheduling (requires lifetime budget).
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ SALES & ROI TAB ═══
+function SalesROITab() {
+  const [data, setData] = useState(null);
+  const [sql, setSql] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [leadsUrl, setLeadsUrl] = useState('');
+  const [salesUrl, setSalesUrl] = useState('');
+  const [rate, setRate] = useState('18');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [s, d] = await Promise.all([api.getSettings(), api.getSalesROI()]);
+      setLeadsUrl(s.sheet_leads_url || ''); setSalesUrl(s.sheet_sales_url || ''); setRate(s.mxn_rate || '18');
+      setData(d);
+    } catch (e) { setData({ error: e.message }); }
+    setLoading(false);
+    api.getSqlROI(90).then(setSql).catch(e => setSql({ ok: false, error: e.message }));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const saveCfg = async () => {
+    setSaving(true);
+    await api.saveSettings({ sheet_leads_url: leadsUrl.trim(), sheet_sales_url: salesUrl.trim(), mxn_rate: rate });
+    await load();
+    setSaving(false);
+  };
+
+  if (loading) return <div className="ld"><div className="sp"></div><p>Loading sales & ROI...</p></div>;
+
+  const setup = (
+    <div className="snap-info" style={{ marginBottom: '1.5rem' }}>
+      <b>Setup — paste your two published CSV links</b>
+      <p style={{ margin: '.5rem 0', fontSize: '.78rem' }}>Google Sheet → File → Share → Publish to web → pick the tab → CSV → Publish → paste link.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem', marginTop: '.5rem' }}>
+        <input value={leadsUrl} onChange={e => setLeadsUrl(e.target.value)} placeholder="Sheet 2 — Leads/attribution CSV URL"
+          style={{ background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.5rem', borderRadius: 6, fontSize: '.8rem', fontFamily: 'DM Sans' }} />
+        <input value={salesUrl} onChange={e => setSalesUrl(e.target.value)} placeholder="Sheet 1 — Sales log CSV URL"
+          style={{ background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.5rem', borderRadius: 6, fontSize: '.8rem', fontFamily: 'DM Sans' }} />
+        <div style={{ display: 'flex', gap: '.75rem', alignItems: 'center' }}>
+          <label style={{ fontSize: '.72rem', color: 'var(--at2)' }}>MXN per USD:</label>
+          <input value={rate} onChange={e => setRate(e.target.value)} style={{ width: 70, background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.4rem', borderRadius: 6, fontSize: '.8rem' }} />
+          <button className="go" onClick={saveCfg} disabled={saving}>{saving ? 'Saving...' : 'Save & Refresh'}</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (!data || data.configured === false) {
+    return <div><div className="sec"><h2 className="sh">Sales &amp; ROI</h2>{setup}<p style={{ color: 'var(--at3)', fontSize: '.85rem' }}>{data?.message || 'Not configured yet.'}</p></div></div>;
+  }
+  if (data.error) {
+    return <div><div className="sec"><h2 className="sh">Sales &amp; ROI</h2>{setup}<div className="err">Error: {data.error}</div></div></div>;
+  }
+
+  const t = data.totals;
+  const posBlock = () => {
+    if (!sql) return <div className="sec"><h2 className="sh">Live POS Revenue (SQL Server)</h2><div className="ld"><div className="sp"></div><p>Pulling live POS sales from SQL Server…</p></div></div>;
+    if (!sql.ok) return <div className="sec"><h2 className="sh">Live POS Revenue (SQL Server)</h2><div className="err">SQL error: {sql.error}</div></div>;
+    const T = sql.totals;
+    return (
+      <>
+        <div className="sec">
+          <h2 className="sh">Live POS Revenue — SQL Server (true numbers)</h2>
+          <p style={{ fontSize: '.8rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+            Real revenue from the point-of-sale system, last {sql.days} days (since {sql.since}). This is the authoritative source — the Google-sheet section below is the manual log for comparison.
+          </p>
+          <div className="kr">
+            <div className="k"><div className="l">Online Revenue</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.onlineRevUSD, 0)}</div><div className="s">{fmt(T.onlineRevMXN, 0)} MXN @ {sql.rate} · agent online</div></div>
+            <div className="k"><div className="l">In-Store from FB Lead</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.adWalkinRevUSD || 0, 0)}</div><div className="s">{fmt(T.adWalkinTickets || 0)} tickets · walk-in phone = FB lead</div></div>
+            <div className="k"><div className="l">Store-Gift Revenue</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.giftRevUSD || 0, 0)}</div><div className="s">{fmt(T.giftTickets || 0)} tickets · 126OB/130OB · FB walk-in</div></div>
+            <div className="k"><div className="l">Ad-Driven Total</div><div className="v" style={{ color: 'var(--gold)' }}>{$(T.adDrivenRevUSD || T.onlineRevUSD, 0)}</div><div className="s">online + in-store FB lead + store-gift</div></div>
+            <div className="k"><div className="l">Other Walk-in</div><div className="v">{$(T.walkinRevUSD, 0)}</div><div className="s">{fmt(T.walkinRevMXN, 0)} MXN · not ad-tagged</div></div>
+            <div className="k"><div className="l">POS Tickets</div><div className="v">{fmt(T.ticketCount + (T.giftTickets || 0))}</div><div className="s">{fmt(T.lineCount)} line items</div></div>
+            <div className="k"><div className="l">Total POS Revenue</div><div className="v">{$(T.onlineRevUSD + (T.adWalkinRevUSD || 0) + T.walkinRevUSD + (T.giftRevUSD || 0), 0)}</div><div className="s">online + FB lead + gift + walk-in</div></div>
+          </div>
+        </div>
+
+        <div className="sec">
+          <h2 className="sh">Campaign ROI — TRUE (POS revenue, online attributed)</h2>
+          <div className="tw">
+            <table>
+              <thead><tr>
+                <th>Campaign</th><th className="r">Orders</th><th className="r">Customers</th>
+                <th className="r">Ad Spend (USD)</th><th className="r">POS Revenue (USD)</th><th className="r">Cost/Order</th><th className="r">ROAS</th>
+              </tr></thead>
+              <tbody>
+                {sql.campaigns.map(c => (
+                  <tr key={c.id}>
+                    <td style={{ fontWeight: 600, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</td>
+                    <td className="r">{fmt(c.orders)}</td>
+                    <td className="r">{fmt(c.customers)}</td>
+                    <td className="r">{$(c.spendUSD, 0)}</td>
+                    <td className="r">{$(c.revenueUSD, 0)}</td>
+                    <td className="r">{c.costPerOrder != null ? $(c.costPerOrder) : '—'}</td>
+                    <td className={`r ${c.roas >= 1 ? 'best' : c.roas != null ? 'worst' : ''}`}>{c.roas != null ? c.roas.toFixed(2) + '×' : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="sec">
+          <h2 className="sh">Agent Scorecard — POS (online vs walk-in)</h2>
+          <div className="tw">
+            <table>
+              <thead><tr><th>Agent</th><th className="r">Online Orders</th><th className="r">Online Rev (USD)</th><th className="r">FB-Lead Walk-in</th><th className="r">FB-Lead Rev (USD)</th><th className="r">Walk-in Orders</th><th className="r">Walk-in Rev (USD)</th><th className="r">Total Rev (USD)</th></tr></thead>
+              <tbody>
+                {sql.agents.map(a => (
+                  <tr key={a.name}>
+                    <td style={{ fontWeight: 600 }}>{a.name}</td>
+                    <td className="r">{fmt(a.onlineOrders)}</td>
+                    <td className="r best">{$(a.onlineRevUSD, 0)}</td>
+                    <td className="r">{fmt(a.adWalkinOrders || 0)}</td>
+                    <td className="r best">{$(a.adWalkinRevUSD || 0, 0)}</td>
+                    <td className="r">{fmt(a.walkinOrders)}</td>
+                    <td className="r">{$(a.walkinRevUSD, 0)}</td>
+                    <td className="r" style={{ fontWeight: 700 }}>{$(a.onlineRevUSD + (a.adWalkinRevUSD || 0) + a.walkinRevUSD, 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  return (
+    <div>
+      <div className="sec">
+        <h2 className="sh">Sales &amp; ROI</h2>
+        {setup}
+      </div>
+      {posBlock()}
+      <div className="sec">
+        <h2 className="sh">Manual Sales Log (Google Sheet — for comparison)</h2>
+        <p style={{ fontSize: '.78rem', color: 'var(--at3)', marginBottom: '1rem' }}>Hand-entered conversions. The SQL section above is the source of truth; this is kept to spot data-entry gaps.</p>
+        <div className="kr">
+          <div className="k"><div className="l">Leads (ads)</div><div className="v">{fmt(t.leads)}</div><div className="s">from attribution sheet</div></div>
+          <div className="k"><div className="l">Sales</div><div className="v">{fmt(t.sales)}</div><div className="s">{pct(t.matchRate, 0)} matched to an ad</div></div>
+          <div className="k"><div className="l">Revenue</div><div className="v">{$(t.revenueUSD, 0)}</div><div className="s">${fmt(t.revenueMXN, 0)} MXN @ {data.rate}</div></div>
+          <div className="k"><div className="l">Attributed sales</div><div className="v">{fmt(t.matched)}</div><div className="s">{fmt(t.unmatched)} not matched</div></div>
+        </div>
+      </div>
+
+      <div className="sec">
+        <h2 className="sh">Campaign ROI (ranked by ROAS)</h2>
+        <div className="tw">
+          <table>
+            <thead><tr>
+              <th>Campaign</th><th className="r">Leads</th><th className="r">Sales</th><th className="r">Conv %</th>
+              <th className="r">Spend (USD)</th><th className="r">Revenue (USD)</th><th className="r">Cost/Sale</th><th className="r">ROAS</th>
+            </tr></thead>
+            <tbody>
+              {data.campaigns.map(c => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 600, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</td>
+                  <td className="r">{fmt(c.leads)}</td>
+                  <td className="r">{fmt(c.sales)}</td>
+                  <td className="r">{pct(c.convRate, 1)}</td>
+                  <td className="r">{$(c.spendUSD, 0)}</td>
+                  <td className="r">{$(c.revenueUSD, 0)}</td>
+                  <td className="r">{c.costPerSale != null ? $(c.costPerSale) : '—'}</td>
+                  <td className={`r ${c.roas >= 1 ? 'best' : c.roas != null ? 'worst' : ''}`}>{c.roas != null ? c.roas.toFixed(2) + '×' : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.6rem' }}>ROAS = revenue ÷ ad spend. Above 1× = profitable on ad cost (before product cost).</p>
+      </div>
+
+      <div className="sec">
+        <h2 className="sh">Agent Scorecard</h2>
+        <div className="tw">
+          <table>
+            <thead><tr><th>Agent</th><th className="r">Deals Closed</th><th className="r">Revenue (USD)</th><th className="r">Avg Ticket (USD)</th></tr></thead>
+            <tbody>
+              {data.agents.map(a => (
+                <tr key={a.name}>
+                  <td style={{ fontWeight: 600 }}>{a.name}</td>
+                  <td className="r">{fmt(a.deals)}</td>
+                  <td className="r">{$(a.revenueUSD, 0)}</td>
+                  <td className="r">{$(a.avgTicketUSD, 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ SCHEDULE TAB (Phase 2) ═══
+function ScheduleTab({ hourRich }) {
+  const recOn = (hourRich?.onHours && hourRich.onHours.length) ? hourRich.onHours : Array.from({ length: 24 }, (_, i) => i);
+  const [onHours, setOnHours] = useState(new Set(recOn));
+  const [days, setDays] = useState(new Set([0, 1, 2, 3, 4, 5, 6]));
+  const [adsets, setAdsets] = useState(null);
+  const [picked, setPicked] = useState(new Set());
+  const [budget, setBudget] = useState(700);
+  const [endDate, setEndDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().split('T')[0]; });
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState(null);
+
+  const DOWS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const loadAdsets = useCallback(async () => {
+    setLoading(true);
+    try { setAdsets(await api.getLiveAdsets()); } catch (e) { setAdsets({ error: e.message }); }
+    setLoading(false);
+  }, []);
+  useEffect(() => { loadAdsets(); }, [loadAdsets]);
+
+  const toggleHour = h => setOnHours(p => { const n = new Set(p); n.has(h) ? n.delete(h) : n.add(h); return n; });
+  const toggleDay = d => setDays(p => { const n = new Set(p); n.has(d) ? n.delete(d) : n.add(d); return n; });
+  const togglePick = id => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const apply = async () => {
+    if (!picked.size) return alert('Select at least one ad set');
+    if (!onHours.size) return alert('Select at least one ON hour');
+    const list = [...picked];
+    const offH = Array.from({ length: 24 }, (_, i) => i).filter(h => !onHours.has(h));
+    const warn = `Create ${list.length} scheduled DUPLICATE ad set(s)?\n\n` +
+      `• ON hours: ${[...onHours].sort((a,b)=>a-b).map(h=>h+':00').join(', ')}\n` +
+      `• OFF (paused) hours: ${offH.map(h=>h+':00').join(', ') || 'none'}\n` +
+      `• Days: ${[...days].sort().map(d=>DOWS[d]).join(', ')}\n` +
+      `• New copy uses LIFETIME budget $${budget} (ends ${endDate})\n\n` +
+      `Originals are NOT touched. New copies are created PAUSED for you to review & publish in Meta.\n\n` +
+      `Note: a duplicate re-enters Meta's learning phase (~3–7 days) — this is unavoidable for scheduling. Continue?`;
+    if (!confirm(warn)) return;
+    setLoading(true); setResults(null);
+    const out = [];
+    for (const id of list) {
+      try {
+        const r = await api.duplicateWithSchedule({ adset_id: id, on_hours: [...onHours], days: [...days], lifetime_budget: budget, end_time: endDate });
+        if (r.ok) out.push({ id, ok: true, msg: `New scheduled copy created (PAUSED): ${r.new_adset?.id} — ${(r.ads||[]).filter(a=>a.id).length} ads cloned` });
+        else out.push({ id, ok: false, msg: r.error || JSON.stringify(r).slice(0, 160) });
+      } catch (e) { out.push({ id, ok: false, msg: e.message }); }
+    }
+    setResults(out); setLoading(false);
+    loadAdsets();
+  };
+
+  return (
+    <div>
+      <div className="sec">
+        <h2 className="sh">Duplicate &amp; Schedule (Dayparting)</h2>
+        <p style={{ fontSize: '.8rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+          Meta blocks converting an existing daily-budget ad set to scheduling. So this creates a <b>new PAUSED copy</b> with
+          a lifetime budget + the dead-hours schedule baked in. Your originals are never touched. Pre-filled with the cheapest hours.
+        </p>
+        <div className="snap-info" style={{ marginBottom: '1.25rem', borderColor: 'rgba(251,146,60,.4)' }}>
+          <b>⚠ Read this:</b> A duplicate is a new ad set, so it <b>re-enters Meta's learning phase (~3–7 days)</b> — unavoidable
+          for any scheduled ad. Social proof (likes/comments) carries over via the same post, so it usually settles fast.
+          New copies are created <b>PAUSED</b>; you review &amp; publish them in Meta. Originals stay live and unchanged so you lose nothing.
+        </div>
+
+        {/* Hour grid */}
+        <h4 style={{ fontSize: '.78rem', textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--at2)', marginBottom: '.6rem' }}>Hours to run ads (green = ON)</h4>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '4px', marginBottom: '1.25rem' }}>
+          {Array.from({ length: 24 }, (_, h) => {
+            const on = onHours.has(h);
+            const tier = hourRich?.rows?.find(r => r.hour === h)?.tier;
+            return (
+              <button key={h} onClick={() => toggleHour(h)}
+                title={tier ? tier.toUpperCase() : ''}
+                style={{
+                  padding: '.5rem .2rem', borderRadius: 6, fontSize: '.72rem', fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid ' + (on ? 'var(--grn)' : 'var(--abdr)'),
+                  background: on ? 'rgba(74,222,128,.18)' : 'var(--as2)',
+                  color: on ? 'var(--grn)' : 'var(--at3)', fontFamily: 'DM Sans'
+                }}>
+                {String(h).padStart(2, '0')}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Days */}
+        <h4 style={{ fontSize: '.78rem', textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--at2)', marginBottom: '.6rem' }}>Days</h4>
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          {DOWS.map((d, i) => {
+            const on = days.has(i);
+            return (
+              <button key={i} onClick={() => toggleDay(i)}
+                style={{
+                  padding: '.5rem .9rem', borderRadius: 6, fontSize: '.78rem', fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid ' + (on ? 'var(--gold)' : 'var(--abdr)'),
+                  background: on ? 'rgba(232,176,74,.18)' : 'var(--as2)',
+                  color: on ? 'var(--gold)' : 'var(--at3)', fontFamily: 'DM Sans'
+                }}>{d}</button>
+            );
+          })}
+        </div>
+
+        {/* Budget + end date */}
+        <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+          <div>
+            <label style={{ fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--at2)' }}>Lifetime budget (USD)</label><br />
+            <input type="number" value={budget} onChange={e => setBudget(parseInt(e.target.value) || 0)}
+              style={{ background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.45rem .6rem', borderRadius: 6, fontFamily: 'DM Sans', fontSize: '.85rem', width: 120, marginTop: 4 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--at2)' }}>End date</label><br />
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+              style={{ background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.45rem .6rem', borderRadius: 6, fontFamily: 'DM Sans', fontSize: '.85rem', marginTop: 4 }} />
+          </div>
+        </div>
+      </div>
+
+      {/* Ad set picker */}
+      <div className="sec">
+        <h2 className="sh">Pick Ad Sets To Schedule</h2>
+        {loading && !adsets && <div className="ld"><div className="sp"></div><p>Loading ad sets...</p></div>}
+        {adsets?.error && <div className="err">Could not load ad sets: {adsets.error}</div>}
+        {Array.isArray(adsets) && (
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }}></th>
+                  <th>Ad Set</th>
+                  <th>Status</th>
+                  <th className="r">Budget</th>
+                  <th>Type</th>
+                  <th>Has schedule?</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adsets.map(a => (
+                  <tr key={a.id} className="day-row" onClick={() => togglePick(a.id)}>
+                    <td><input type="checkbox" checked={picked.has(a.id)} readOnly /></td>
+                    <td style={{ fontWeight: 600, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</td>
+                    <td><span className={`tag ${a.status === 'ACTIVE' ? 'inc' : 'mon'}`}>{a.status}</span></td>
+                    <td className="r">{a.budget_type === 'lifetime' ? $(a.lifetime_budget, 0) : $(a.daily_budget, 0)}</td>
+                    <td>{a.budget_type}</td>
+                    <td>{a.has_schedule ? <span className="tag inc">YES</span> : <span style={{ color: 'var(--at3)' }}>no</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+          <button className="go" onClick={apply} disabled={loading || !picked.size}>
+            {loading ? 'Creating copies...' : `Duplicate & Schedule ${picked.size} Ad Set(s)`}
+          </button>
+          <span style={{ fontSize: '.75rem', color: 'var(--at3)' }}>Ad sets remain PAUSED. You activate them manually in Meta.</span>
+        </div>
+
+        {results && (
+          <div style={{ marginTop: '1.25rem' }}>
+            {results.map((r, i) => (
+              <div key={i} className="snap-info" style={{ marginBottom: '.5rem', borderColor: r.ok ? 'rgba(74,222,128,.4)' : 'rgba(248,113,113,.4)' }}>
+                <b style={{ color: r.ok ? 'var(--grn)' : 'var(--red)' }}>{r.ok ? '✓' : '✕'}</b> {r.id}: {r.msg}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DOWTab({ dowS }) {
   return (
     <div className="sec">
@@ -800,7 +1472,7 @@ export default function Dashboard() {
         <div>
           <label>Presets</label><br />
           <div className="pbtn">
-            {[['7d', '7 Days'], ['14d', '14 Days'], ['30d', '30 Days'], ['90d', '90 Days'], ['this_month', 'This Month'], ['last_month', 'Last Month']].map(([k, l]) => (
+            {[['7d', '7 Days'], ['14d', '14 Days'], ['30d', '30 Days'], ['90d', '90 Days'], ['120d', '120 Days'], ['this_month', 'This Month'], ['last_month', 'Last Month']].map(([k, l]) => (
               <button key={k} className={`pb ${ap === k ? 'a' : ''}`} onClick={() => sp(k)}>{l}</button>
             ))}
           </div>
@@ -824,12 +1496,16 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
 
-          {tab === 'overview' && <OverviewTab camps={camps} avgCPR={avgCPR} funnel={funnel} weekly={weekly} />}
+          {tab === 'overview' && <OverviewTab camps={camps} avgCPR={avgCPR} funnel={funnel} weekly={weekly} totals={data.totals} dowRich={data.dowRich} ads={ads} nDays={nDays} />}
+          {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
+          {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
+          {tab === 'salesroi' && <SalesROITab />}
+          {tab === 'schedule' && <ScheduleTab hourRich={data.hourRich} />}
           {tab === 'depth' && <DepthTab ads={ads} />}
           {tab === 'recs' && <RecsTab ads={ads} camps={camps} tSpend={tSpend} nDays={nDays} />}
           {tab === 'tracker' && <TrackerTab ads={ads} tSpend={tSpend} tMsgs={tMsgs} bCTR={bCTR} bCPM={bCPM} tReach={tReach} nDays={nDays} />}

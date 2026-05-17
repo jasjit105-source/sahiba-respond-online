@@ -15,6 +15,13 @@ export const api = {
   // Dashboard
   getDashboard: (from, to) => request('GET', `/dashboard?from=${from}&to=${to}`),
   getAnalytics: (from, to) => request('GET', `/analytics?from=${from}&to=${to}`),
+  getLiveAdsets: () => request('GET', '/live-adsets'),
+  applySchedule: (data) => request('POST', '/apply-schedule', data),
+  duplicateWithSchedule: (data) => request('POST', '/duplicate-with-schedule', data),
+  getSalesROI: () => request('GET', '/sales-roi'),
+  getSqlROI: (days) => request('GET', `/sql-roi?days=${days || 90}`),
+  getSettings: () => request('GET', '/settings'),
+  saveSettings: (data) => request('POST', '/settings', data),
 
   // Campaigns
   getCampaigns: () => request('GET', '/campaigns'),
@@ -55,10 +62,6 @@ export const api = {
   // Existing posts
   getPagePosts: () => request('GET', '/page-posts'),
   getIgPosts: () => request('GET', '/ig-posts'),
-
-  // Settings
-  getSettings: () => request('GET', '/settings'),
-  saveSettings: (data) => request('POST', '/settings', data),
 
   // Media Library
   getMedia: (params) => {

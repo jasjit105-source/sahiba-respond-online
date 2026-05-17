@@ -369,16 +369,18 @@ app.get('/api/analytics', async (req, res) => {
   const t0 = Date.now();
 
   try {
-    // Parallel: campaigns, daily account totals, ads
-    const [campRaw, dailyRaw, adsRaw] = await Promise.all([
+    // Parallel: campaigns, daily account totals, ads, hourly breakdown
+    const [campRaw, dailyRaw, adsRaw, hourlyRaw] = await Promise.all([
       mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'campaign', time_range: timeRange }),
       mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'account', time_range: timeRange, time_breakdown: 'day' }),
-      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'ad', time_range: timeRange })
+      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'ad', time_range: timeRange }),
+      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'account', time_range: timeRange, breakdown: 'hourly_stats_aggregated_by_advertiser_time_zone' }).catch(e => ({ _err: e.message }))
     ]);
 
     const campData = extractText(campRaw);
     const dailyData = extractText(dailyRaw);
     const adsData = extractText(adsRaw);
+    const hourlyData = hourlyRaw?._err ? null : extractText(hourlyRaw);
 
     const campList = campData?.data || (Array.isArray(campData) ? campData : []);
     const adsList = adsData?.data || (Array.isArray(adsData) ? adsData : []);
@@ -493,10 +495,10 @@ app.get('/api/analytics', async (req, res) => {
       return ac - bc;
     });
 
-    // DOW
+    // DOW — rich weekday analysis
     const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dow = {};
-    DOW.forEach(d => { dow[d] = { spend: 0, clicks: 0, impressions: 0, msgs: 0, count: 0 }; });
+    DOW.forEach(d => { dow[d] = { spend: 0, clicks: 0, impressions: 0, msgs: 0, connections: 0, depth2: 0, depth5: 0, count: 0, dates: [] }; });
     days.forEach(d => {
       if (!d.spend && !d.clicks) return;
       const dn = DOW[new Date(d.date + 'T12:00:00').getDay()];
@@ -504,18 +506,95 @@ app.get('/api/analytics', async (req, res) => {
       dow[dn].clicks += d.clicks;
       dow[dn].impressions += d.impressions;
       dow[dn].msgs += d.msgs;
+      dow[dn].connections += d.connections;
+      dow[dn].depth2 += d.depth2;
+      dow[dn].depth5 += d.depth5;
       dow[dn].count++;
+      dow[dn].dates.push(d.date);
     });
+
+    // Simple sorted list (kept for backward compat with old DOW tab)
     const dowS = DOW.map(n => {
       const d = dow[n];
       if (!d.count) return null;
+      return { day: n, avgSpend: d.spend / d.count, avgMsgs: d.msgs / d.count, cpr: d.msgs > 0 ? d.spend / d.msgs : null };
+    }).filter(Boolean).sort((a, b) => (a.cpr || 999) - (b.cpr || 999));
+
+    // Rich weekday breakdown for "Best Days" tab
+    const wdRows = DOW.map(n => {
+      const d = dow[n];
+      if (!d.count) return { day: n, weeks: 0, noData: true };
+      const cpr = d.msgs > 0 ? d.spend / d.msgs : null;
+      const replyRate = d.connections > 0 ? (d.msgs / d.connections * 100) : 0;
+      const depthRate = d.connections > 0 ? (d.depth5 / d.connections * 100) : 0;
       return {
         day: n,
+        weeks: d.count,
+        totalSpend: d.spend,
+        totalMsgs: d.msgs,
+        totalConnections: d.connections,
         avgSpend: d.spend / d.count,
         avgMsgs: d.msgs / d.count,
-        cpr: d.msgs > 0 ? d.spend / d.msgs : null
+        avgClicks: d.clicks / d.count,
+        avgConnections: d.connections / d.count,
+        cpr,
+        replyRate,
+        depthRate
       };
-    }).filter(Boolean).sort((a, b) => (a.cpr || 999) - (b.cpr || 999));
+    });
+
+    // Period-wide averages (only days with msgs) for scoring
+    const valid = wdRows.filter(w => !w.noData && w.cpr != null);
+    const periodAvgCPR = valid.length ? valid.reduce((s, w) => s + w.cpr, 0) / valid.length : null;
+    const periodAvgMsgs = valid.length ? valid.reduce((s, w) => s + w.avgMsgs, 0) / valid.length : 0;
+
+    // Score each weekday & assign action
+    wdRows.forEach(w => {
+      if (w.noData || w.cpr == null) { w.action = 'NO DATA'; w.actionCls = 'mon'; w.score = 0; return; }
+      // Lower CPR = better. Score 0-100 relative to best/worst
+      const cprs = valid.map(v => v.cpr);
+      const minC = Math.min(...cprs), maxC = Math.max(...cprs);
+      w.score = maxC === minC ? 100 : Math.round((1 - (w.cpr - minC) / (maxC - minC)) * 100);
+      if (periodAvgCPR && w.cpr <= periodAvgCPR * 0.8 && w.avgMsgs >= periodAvgMsgs * 0.8) {
+        w.action = 'SCALE ↑'; w.actionCls = 'inc'; w.rec = `Best day — invest more. $${w.cpr.toFixed(2)}/reply`;
+      } else if (periodAvgCPR && w.cpr >= periodAvgCPR * 1.5) {
+        w.action = 'PAUSE'; w.actionCls = 'dec'; w.rec = `Expensive day — pause or reduce. $${w.cpr.toFixed(2)}/reply`;
+      } else if (periodAvgCPR && w.cpr >= periodAvgCPR * 1.15) {
+        w.action = 'REDUCE'; w.actionCls = 'dec'; w.rec = `Above average — lower budget`;
+      } else {
+        w.action = 'KEEP'; w.actionCls = 'mon'; w.rec = `In line with average`;
+      }
+    });
+
+    // Rank best→worst by CPR
+    const ranked = [...valid].sort((a, b) => a.cpr - b.cpr);
+    const bestDays = ranked.slice(0, 3).map(w => w.day);
+    const worstDays = ranked.slice(-2).map(w => w.day);
+
+    // Budget reallocation suggestion: shift % from worst to best
+    const totalWeekdaySpend = valid.reduce((s, w) => s + w.totalSpend, 0);
+    const budgetPlan = wdRows.map(w => {
+      if (w.noData || w.cpr == null) return { day: w.day, current: 0, suggested: 0, change: 0 };
+      // Weight inversely by CPR (cheaper day gets more budget)
+      const invCpr = 1 / w.cpr;
+      return { day: w.day, _inv: invCpr, current: w.totalSpend };
+    });
+    const totalInv = budgetPlan.reduce((s, b) => s + (b._inv || 0), 0);
+    budgetPlan.forEach(b => {
+      if (!b._inv) { b.suggested = 0; b.change = 0; return; }
+      b.suggested = Math.round((b._inv / totalInv) * totalWeekdaySpend);
+      b.change = b.suggested - b.current;
+      delete b._inv;
+    });
+
+    const dowRich = {
+      rows: wdRows,
+      periodAvgCPR,
+      bestDays,
+      worstDays,
+      budgetPlan,
+      lookbackDays: days.filter(d => d.spend > 0).length
+    };
 
     // Funnel
     const funnel = {
@@ -541,11 +620,75 @@ app.get('/api/analytics', async (req, res) => {
     });
     const weekly = Object.values(weeks).sort((a, b) => a.start.localeCompare(b.start));
 
+    // ─── HOUR-OF-DAY ANALYSIS ───
+    let hourRich = null;
+    try {
+      const hRows = hourlyData?.segmented_metrics || hourlyData?.data || (Array.isArray(hourlyData) ? hourlyData : []);
+      if (hRows && hRows.length) {
+        const hours = {}; // 0-23 → totals
+        for (let h = 0; h < 24; h++) hours[h] = { spend: 0, clicks: 0, impressions: 0, msgs: 0, connections: 0 };
+        for (const seg of hRows) {
+          const m = seg.metrics || seg;
+          const hourStr = seg.hourly_stats_aggregated_by_advertiser_time_zone
+            || m.hourly_stats_aggregated_by_advertiser_time_zone
+            || seg.breakdown_value || seg.hour;
+          if (hourStr == null) continue;
+          const hh = parseInt(String(hourStr).split(':')[0].trim());
+          if (isNaN(hh) || hh < 0 || hh > 23) continue;
+          const ac = m.actions || [];
+          hours[hh].spend += parseFloat(m.spend || 0);
+          hours[hh].clicks += parseInt(m.clicks || 0);
+          hours[hh].impressions += parseInt(m.impressions || 0);
+          hours[hh].msgs += xA(ac, 'onsite_conversion.messaging_first_reply');
+          hours[hh].connections += xA(ac, 'onsite_conversion.total_messaging_connection');
+        }
+        const hourRows = [];
+        for (let h = 0; h < 24; h++) {
+          const d = hours[h];
+          const has = d.spend > 0 || d.clicks > 0 || d.msgs > 0;
+          hourRows.push({
+            hour: h,
+            label: `${String(h).padStart(2,'0')}:00`,
+            spend: d.spend, clicks: d.clicks, impressions: d.impressions,
+            msgs: d.msgs, connections: d.connections,
+            cpr: d.msgs > 0 ? d.spend / d.msgs : null,
+            replyRate: d.connections > 0 ? d.msgs / d.connections * 100 : 0,
+            hasData: has
+          });
+        }
+        const validH = hourRows.filter(r => r.cpr != null);
+        const avgH = validH.length ? validH.reduce((s, r) => s + r.cpr, 0) / validH.length : null;
+        const cprs = validH.map(r => r.cpr);
+        const minC = cprs.length ? Math.min(...cprs) : 0;
+        const maxC = cprs.length ? Math.max(...cprs) : 1;
+        hourRows.forEach(r => {
+          if (r.cpr == null) { r.score = 0; r.tier = r.hasData ? 'weak' : 'none'; return; }
+          r.score = maxC === minC ? 100 : Math.round((1 - (r.cpr - minC) / (maxC - minC)) * 100);
+          if (avgH && r.cpr <= avgH * 0.8) r.tier = 'prime';
+          else if (avgH && r.cpr >= avgH * 1.5) r.tier = 'dead';
+          else if (avgH && r.cpr >= avgH * 1.15) r.tier = 'weak';
+          else r.tier = 'ok';
+        });
+        const ranked = [...validH].sort((a, b) => a.cpr - b.cpr);
+        // Suggested on/off windows: contiguous hours that are prime/ok
+        const onHours = hourRows.filter(r => r.tier === 'prime' || r.tier === 'ok').map(r => r.hour).sort((a,b)=>a-b);
+        const offHours = hourRows.filter(r => r.tier === 'dead' || (r.tier === 'none')).map(r => r.hour).sort((a,b)=>a-b);
+        hourRich = {
+          rows: hourRows,
+          avgCPR: avgH,
+          bestHours: ranked.slice(0, 4).map(r => r.label),
+          worstHours: ranked.slice(-4).map(r => r.label),
+          onHours, offHours,
+          dataDays: days.filter(d => d.spend > 0).length
+        };
+      }
+    } catch (e) { console.error('Hourly parse error:', e.message); }
+
     const fetchTime = ((Date.now() - t0) / 1000).toFixed(1);
 
     res.json({
       period: { sd: dateFrom, ed: dateTo },
-      camps, ads, days, dowS, funnel, weekly,
+      camps, ads, days, dowS, dowRich, hourRich, funnel, weekly,
       totals: { tSpend, tMsgs, tClicks, tImps, tReach, avgCPR, bCTR, bCPM },
       fetchTime
     });
@@ -607,6 +750,147 @@ app.patch('/api/adsets/:metaId', async (req, res) => {
     run('UPDATE adsets SET status = ?, updated_at = datetime("now") WHERE meta_id = ?', [status, req.params.metaId]);
   }
   res.json({ ok: true });
+});
+
+// ─── PHASE 2: AD SCHEDULING (dayparting) ───
+
+// List live ad sets from Meta with budget info
+app.get('/api/live-adsets', async (req, res) => {
+  try {
+    const raw = extractText(await mcpCall('get_adsets', { account_id: AD_ACCOUNT_ID }));
+    const list = raw?.data || (Array.isArray(raw) ? raw : []);
+    const out = list.map(a => ({
+      id: a.id,
+      name: a.name,
+      campaign_id: a.campaign_id,
+      status: a.effective_status || a.status,
+      daily_budget: a.daily_budget ? parseInt(a.daily_budget) / 100 : null,
+      lifetime_budget: a.lifetime_budget ? parseInt(a.lifetime_budget) / 100 : null,
+      budget_type: a.lifetime_budget && parseInt(a.lifetime_budget) > 0 ? 'lifetime' : 'daily',
+      has_schedule: !!(a.adset_schedule && a.adset_schedule.length),
+      end_time: a.end_time || null
+    }));
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Convert on-hours array → Meta adset_schedule blocks
+function buildSchedule(onHours, days) {
+  const s = [...new Set(onHours)].filter(h => h >= 0 && h <= 23).sort((a, b) => a - b);
+  if (!s.length) return [];
+  const blocks = [];
+  let start = s[0], prev = s[0];
+  for (let i = 1; i < s.length; i++) {
+    if (s[i] === prev + 1) { prev = s[i]; continue; }
+    blocks.push([start, prev]); start = s[i]; prev = s[i];
+  }
+  blocks.push([start, prev]);
+  // Meta: start_minute/end_minute = minutes from midnight; end is exclusive boundary
+  return blocks.map(([a, b]) => ({
+    start_minute: a * 60,
+    end_minute: (b + 1) * 60,   // hour boundary; 24→1440 = midnight
+    days: days && days.length ? days : [0, 1, 2, 3, 4, 5, 6]
+  }));
+}
+
+// Apply dayparting schedule to an ad set (switches to lifetime budget)
+app.post('/api/apply-schedule', async (req, res) => {
+  const { adset_id, on_hours, days, lifetime_budget, end_time } = req.body;
+  if (!adset_id) return res.status(400).json({ error: 'adset_id required' });
+  if (!on_hours || !on_hours.length) return res.status(400).json({ error: 'on_hours required' });
+  if (!lifetime_budget || lifetime_budget < 1) return res.status(400).json({ error: 'lifetime_budget required (USD)' });
+  if (!end_time) return res.status(400).json({ error: 'end_time required (YYYY-MM-DD)' });
+
+  const schedule = buildSchedule(on_hours, days);
+  try {
+    const args = {
+      adset_id,
+      lifetime_budget: Math.round(lifetime_budget * 100),   // cents
+      daily_budget: 0,                                       // clear daily
+      end_time: `${end_time}T23:59:00-0600`,                 // account TZ approx
+      pacing_type: ['day_parting'],
+      adset_schedule: schedule
+    };
+    const result = extractText(await mcpCall('update_adset', args));
+    res.json({ ok: true, applied_schedule: schedule, meta_response: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message, attempted_schedule: schedule });
+  }
+});
+
+// Duplicate an existing ad set as a NEW lifetime-budget ad set WITH a daypart schedule.
+// Original is left untouched. New ad set + cloned ads are created PAUSED for user review.
+app.post('/api/duplicate-with-schedule', async (req, res) => {
+  const { adset_id, on_hours, days, lifetime_budget, end_time } = req.body;
+  if (!adset_id) return res.status(400).json({ error: 'adset_id required' });
+  if (!on_hours || !on_hours.length) return res.status(400).json({ error: 'on_hours required' });
+  if (!lifetime_budget || lifetime_budget < 1) return res.status(400).json({ error: 'lifetime_budget required (USD)' });
+  if (!end_time) return res.status(400).json({ error: 'end_time required (YYYY-MM-DD)' });
+
+  const schedule = buildSchedule(on_hours, days);
+  const steps = [];
+  try {
+    // 1. Read original ad set
+    const orig = extractText(await mcpCall('get_adset_details', { adset_id }));
+    if (!orig || orig.error) return res.status(500).json({ error: 'Could not read source ad set', detail: orig });
+    steps.push(`Read source ad set "${orig.name}"`);
+
+    const campaignId = orig.campaign_id;
+    const newName = `${orig.name} [Scheduled]`;
+
+    // 2. Create the new ad set: lifetime budget + dayparting + copied targeting, PAUSED
+    const createArgs = {
+      account_id: AD_ACCOUNT_ID,
+      campaign_id: campaignId,
+      name: newName,
+      status: 'PAUSED',
+      lifetime_budget: Math.round(lifetime_budget * 100),
+      end_time: `${end_time}T23:59:00-0600`,
+      pacing_type: ['day_parting'],
+      adset_schedule: schedule,
+      billing_event: orig.billing_event || 'IMPRESSIONS',
+      optimization_goal: orig.optimization_goal || 'CONVERSATIONS',
+      targeting: orig.targeting || undefined,
+      promoted_object: orig.promoted_object || undefined,
+      destination_type: orig.destination_type || undefined,
+      bid_strategy: orig.bid_strategy || 'LOWEST_COST_WITHOUT_CAP'
+    };
+    const newAdset = extractText(await mcpCall('create_adset', createArgs));
+    const newAdsetId = newAdset?.id || newAdset?.adset_id;
+    if (!newAdsetId) return res.status(500).json({ error: 'Failed to create scheduled ad set', detail: newAdset, steps });
+    steps.push(`Created new ad set ${newAdsetId} (lifetime $${lifetime_budget}, PAUSED, scheduled)`);
+
+    // 3. Clone each ad (reuse existing creative → keeps post + social proof)
+    const adsRaw = extractText(await mcpCall('get_ads', { adset_id }));
+    const ads = adsRaw?.data || (Array.isArray(adsRaw) ? adsRaw : []);
+    const adResults = [];
+    for (const ad of ads) {
+      try {
+        const det = extractText(await mcpCall('get_ad_details', { ad_id: ad.id }));
+        const creativeId = det?.creative?.id || ad?.creative?.id;
+        if (!creativeId) { adResults.push({ name: ad.name, error: 'no creative id' }); continue; }
+        const newAd = extractText(await mcpCall('create_ad', {
+          account_id: AD_ACCOUNT_ID,
+          adset_id: newAdsetId,
+          name: ad.name,
+          status: 'PAUSED',
+          creative_id: creativeId
+        }));
+        if (newAd?.id) adResults.push({ name: ad.name, id: newAd.id });
+        else adResults.push({ name: ad.name, error: JSON.stringify(newAd).slice(0, 120) });
+      } catch (e) { adResults.push({ name: ad.name, error: e.message }); }
+    }
+    steps.push(`Cloned ${adResults.filter(a => a.id).length}/${ads.length} ads`);
+
+    res.json({
+      ok: true,
+      original_adset: { id: adset_id, name: orig.name, untouched: true },
+      new_adset: { id: newAdsetId, name: newName, status: 'PAUSED', lifetime_budget, end_time },
+      schedule, ads: adResults, steps
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, steps });
+  }
 });
 
 // --- Ads ---
@@ -773,6 +1057,338 @@ app.post('/api/settings', (req, res) => {
     run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value]);
   }
   res.json({ ok: true });
+});
+
+// ─── SALES & ROI (Google Sheets join) ───
+function setting(k, def = '') { const r = get('SELECT value FROM settings WHERE key = ?', [k]); return r ? r.value : def; }
+
+// minimal CSV parser (handles quoted fields, commas, newlines)
+function parseCSV(text) {
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') q = false;
+      else cur += c;
+    } else {
+      if (c === '"') q = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+      else if (c === '\r') { /* skip */ }
+      else cur += c;
+    }
+  }
+  if (cur.length || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+const normPhone = p => { const d = String(p || '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : ''; };
+const num = v => { const n = parseFloat(String(v || '').replace(/[^0-9.]/g, '')); return isNaN(n) ? 0 : n; };
+
+async function fetchCSV(url) {
+  if (!url) return [];
+  const r = await fetch(url, { redirect: 'follow' });
+  if (!r.ok) throw new Error(`CSV fetch ${r.status}`);
+  return parseCSV(await r.text());
+}
+
+// ─── Phase 2: TRUE POS revenue from SQL Server, attributed to ad campaigns ───
+const SQL_PROXY_URL = 'https://aggrievedly-spryest-hattie.ngrok-free.dev/V1/query';
+const SQL_PROXY_TOKEN = 'Sahiba_CZSfEghwaD4s';
+const VENDEDOR_TO_AGENT = { YAZMIN: 'Jazmin', YOANA: 'Yoana', YOANA_ECOMMERCE: 'Yoana', 'E-COMMERCE': 'Nancy', NANCY: 'Nancy' };
+const YOANA_CUTOFF = '2026-05-03';
+function classifyChannel(vendedor, dateStr) {
+  if (!vendedor) return 'walkin';
+  const v = String(vendedor).trim().toUpperCase();
+  if (v === 'YAZMIN' || v === 'YOANA_ECOMMERCE' || v === 'E-COMMERCE' || v === 'NANCY') return 'agent_online';
+  if (v === 'YOANA') { if (!dateStr) return 'walkin'; return String(dateStr).slice(0, 10) < YOANA_CUTOFF ? 'agent_online' : 'walkin'; }
+  return 'walkin';
+}
+async function sqlQuery(query) {
+  const r = await fetch(SQL_PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SQL_PROXY_TOKEN, 'ngrok-skip-browser-warning': 'true' },
+    body: JSON.stringify({ query })
+  });
+  if (!r.ok) throw new Error(`SQL proxy ${r.status}`);
+  const d = await r.json();
+  return d.data || d.rows || d.recordset || (Array.isArray(d) ? d : []);
+}
+
+app.get('/api/sql-roi', async (req, res) => {
+  try {
+    const days = Math.max(7, Math.min(parseInt(req.query.days) || 90, 365));
+    const rate = parseFloat(setting('mxn_rate', '18')) || 18;
+    const leadsUrl = setting('sheet_leads_url');
+    const since = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+
+    // 1. Build phone → campaign map from the leads/attribution sheet
+    const leadByPhone = {};
+    if (leadsUrl) {
+      const rows = await fetchCSV(leadsUrl);
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i]; if (!r || r.length < 4) continue;
+        const phone = normPhone(r[1]);
+        const ids = r.map(x => String(x || '').trim()).filter(x => /^\d{15,}$/.test(x));
+        if (phone && ids[0] && !leadByPhone[phone]) leadByPhone[phone] = { camp: ids[0], adset: ids[1] || '', ad: ids[2] || '' };
+      }
+    }
+
+    // 2. Pull POS sale lines with phone from both online stores
+    const cols = `NO_REFEREN, Fecha, Vendedor, Cantidad, Precio_Venta, CustPhone`;
+    const [cercu, leona] = await Promise.all([
+      sqlQuery(`SELECT TOP 30000 ${cols} FROM MOVS_CIRCUNVALACION WHERE CustPhone IS NOT NULL AND CustPhone <> '' AND Movimiento='TK' AND Fecha >= '${since}'`),
+      sqlQuery(`SELECT TOP 30000 ${cols} FROM MOVS_LEONA WHERE CustPhone IS NOT NULL AND CustPhone <> '' AND CustCliente IS NOT NULL AND CustCliente <> '' AND Fecha >= '${since}'`)
+    ]);
+    const lines = [...cercu.map(r => ({ ...r, store: 'TS0002' })), ...leona.map(r => ({ ...r, store: 'TS0001' }))];
+
+    // 2b. FB STORE-GIFT tickets — gift articles 126OB / 130OB at $0 = customer came from a FB ad
+    //     (only ad viewers know to ask for the gift). Whole ticket counts as ad-driven revenue.
+    const GIFT_MATCH = `(Articulo LIKE '126OB%' OR Articulo LIKE '%/126OB%' OR Articulo LIKE '126OB-%'
+                        OR Articulo LIKE '130OB%' OR Articulo LIKE '%/130OB%' OR Articulo LIKE '130OB-%')`;
+    const giftKeys = new Set();      // store|NO_REFEREN of gift tickets
+    let giftRevMXN = 0; const giftPhones = new Set(); let giftTickets = 0;
+    try {
+      const giftStores = [['MOVS_CIRCUNVALACION', 'TS0002'], ['MOVS_LEONA', 'TS0001']];
+      for (const [tbl, store] of giftStores) {
+        const ids = await sqlQuery(
+          `SELECT DISTINCT NO_REFEREN FROM ${tbl} WHERE Movimiento='TK' AND Fecha >= '${since}' AND Precio_Venta = 0 AND ${GIFT_MATCH}`
+        );
+        const list = ids.map(r => String(r.NO_REFEREN)).filter(Boolean).slice(0, 4000);
+        if (!list.length) continue;
+        const inClause = list.map(x => `'${x.replace(/'/g, "''")}'`).join(',');
+        const glines = await sqlQuery(
+          `SELECT NO_REFEREN, Cantidad, Precio_Venta, CustPhone FROM ${tbl} WHERE Movimiento='TK' AND NO_REFEREN IN (${inClause})`
+        );
+        const seen = new Set();
+        for (const g of glines) {
+          const key = store + '|' + g.NO_REFEREN;
+          giftKeys.add(key);
+          if (!seen.has(key)) { seen.add(key); giftTickets++; }
+          giftRevMXN += (parseFloat(g.Cantidad) || 0) * (parseFloat(g.Precio_Venta) || 0);
+          const ph = normPhone(g.CustPhone); if (ph) giftPhones.add(ph);
+        }
+      }
+    } catch (e) { console.error('gift query error:', e.message); }
+
+    // 3. Classify + aggregate
+    const tickets = {};            // store|ticket -> {phone, agent, channel, total, date}
+    const agentStats = {};         // agent -> {online:{tickets:Set,mxn}, walkin:{...}}
+    const phoneFirst = {};         // phone -> earliest date in window
+    let onlineMXN = 0, walkinMXN = 0, adWalkinMXN = 0;
+    for (const ln of lines) {
+      const phone = normPhone(ln.CustPhone);
+      if (!phone) continue;
+      const vend = (ln.Vendedor || '').trim();
+      const dateStr = ln.Fecha ? String(ln.Fecha).slice(0, 10) : '';
+      const base = classifyChannel(vend, dateStr);
+      // Reclassify: a "walk-in" whose phone matches a Facebook lead is in fact
+      // ad-driven revenue (customer saw the ad, came to the store). Gift tickets
+      // are already excluded below (continue) so there is no double-count.
+      const channel = (base === 'walkin' && leadByPhone[phone]) ? 'ad_walkin' : base;
+      const isAd = channel === 'agent_online' || channel === 'ad_walkin';
+      const agent = VENDEDOR_TO_AGENT[vend.toUpperCase()] || (isAd ? 'Other-online' : 'Walk-in');
+      const lineTotal = (parseFloat(ln.Cantidad) || 0) * (parseFloat(ln.Precio_Venta) || 0);
+      const tkey = ln.store + '|' + ln.NO_REFEREN;
+      if (giftKeys.has(tkey)) continue;   // counted in FB Store-Gift bucket, skip to avoid double-count
+      if (!tickets[tkey]) tickets[tkey] = { phone, agent, channel, total: 0, date: dateStr };
+      tickets[tkey].total += lineTotal;
+      if (channel === 'agent_online') onlineMXN += lineTotal;
+      else if (channel === 'ad_walkin') adWalkinMXN += lineTotal;
+      else walkinMXN += lineTotal;
+      if (!phoneFirst[phone] || dateStr < phoneFirst[phone]) phoneFirst[phone] = dateStr;
+    }
+
+    // 4. Per-campaign attribution (online tickets only) + agent scorecard
+    const campAgg = {};            // camp -> {tickets, mxn, newCust:Set, phones:Set}
+    for (const [, t] of Object.entries(tickets)) {
+      const a = agentStats[t.agent] || (agentStats[t.agent] = { onlineTk: new Set(), onlineMXN: 0, walkinTk: new Set(), walkinMXN: 0, adWalkinTk: new Set(), adWalkinMXN: 0 });
+      const tid = t.phone + '|' + t.date;
+      const isAd = t.channel === 'agent_online' || t.channel === 'ad_walkin';
+      if (t.channel === 'agent_online') { a.onlineTk.add(tid); a.onlineMXN += t.total; }
+      else if (t.channel === 'ad_walkin') { a.adWalkinTk.add(tid); a.adWalkinMXN += t.total; }
+      else { a.walkinTk.add(tid); a.walkinMXN += t.total; }
+      if (!isAd) continue;
+      const attr = leadByPhone[t.phone];
+      if (!attr) continue;
+      const c = campAgg[attr.camp] || (campAgg[attr.camp] = { tickets: 0, mxn: 0, phones: new Set() });
+      c.tickets++; c.mxn += t.total; c.phones.add(t.phone);
+    }
+
+    // 5. Meta spend by campaign
+    const until = new Date().toISOString().slice(0, 10);
+    let campSpend = {}, campName = {};
+    try {
+      const ins = extractText(await mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'campaign', time_range: { since, until } }));
+      for (const c of (ins?.data || [])) { campSpend[c.campaign_id] = parseFloat(c.spend || 0); campName[c.campaign_id] = c.campaign_name; }
+    } catch (e) {}
+
+    const campaigns = Object.keys({ ...campAgg, ...campSpend }).map(id => {
+      const s = campAgg[id] || { tickets: 0, mxn: 0, phones: new Set() };
+      const spendUSD = campSpend[id] || 0;
+      const revUSD = s.mxn / rate;
+      return {
+        id, name: campName[id] || id,
+        orders: s.tickets, customers: s.phones.size,
+        revenueUSD: revUSD, spendUSD,
+        costPerOrder: s.tickets ? spendUSD / s.tickets : null,
+        roas: spendUSD ? revUSD / spendUSD : null
+      };
+    }).filter(c => c.spendUSD > 0 || c.orders > 0).sort((a, b) => (b.roas || -1) - (a.roas || -1));
+
+    // Synthetic FB Store-Gift bucket (all campaigns run the gift offer → generic)
+    const giftRevUSD = giftRevMXN / rate;
+    if (giftTickets > 0) {
+      campaigns.unshift({
+        id: 'FB_STORE_GIFT', name: 'FB Store-Gift (walk-in, ad-driven)',
+        orders: giftTickets, customers: giftPhones.size,
+        revenueUSD: giftRevUSD, spendUSD: 0,
+        costPerOrder: null, roas: null, isGiftBucket: true
+      });
+    }
+
+    const agents = Object.entries(agentStats).map(([name, v]) => ({
+      name,
+      onlineOrders: v.onlineTk.size, onlineRevUSD: v.onlineMXN / rate,
+      adWalkinOrders: v.adWalkinTk.size, adWalkinRevUSD: v.adWalkinMXN / rate,
+      walkinOrders: v.walkinTk.size, walkinRevUSD: v.walkinMXN / rate
+    })).sort((a, b) => (b.onlineRevUSD + b.adWalkinRevUSD) - (a.onlineRevUSD + a.adWalkinRevUSD));
+
+    res.json({
+      ok: true, days, rate, since,
+      totals: {
+        onlineRevUSD: onlineMXN / rate, walkinRevUSD: walkinMXN / rate,
+        onlineRevMXN: onlineMXN, walkinRevMXN: walkinMXN,
+        adWalkinRevUSD: adWalkinMXN / rate, adWalkinRevMXN: adWalkinMXN,
+        adWalkinTickets: Object.values(tickets).filter(t => t.channel === 'ad_walkin').length,
+        giftRevUSD, giftRevMXN, giftTickets, giftCustomers: giftPhones.size,
+        adDrivenRevUSD: (onlineMXN + adWalkinMXN + giftRevMXN) / rate,
+        ticketCount: Object.keys(tickets).length, lineCount: lines.length
+      },
+      campaigns, agents
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/sales-roi', async (req, res) => {
+  try {
+    const leadsUrl = setting('sheet_leads_url');
+    const salesUrl = setting('sheet_sales_url');
+    const rate = parseFloat(setting('mxn_rate', '18')) || 18;
+    if (!leadsUrl || !salesUrl) {
+      return res.json({ configured: false, message: 'Paste both published CSV URLs in the setup box.' });
+    }
+
+    const [leadRows, saleRows] = await Promise.all([fetchCSV(leadsUrl), fetchCSV(salesUrl)]);
+
+    // ── Sheet 2: Leads / attribution ──  NAME, PHONE, CHAT LINK, CAMP ID, AD SET ID, AD ID
+    const leadByPhone = {};            // phone -> {camp, adset, ad, name}
+    const leadCountByCamp = {};        // campId -> # leads
+    let leadTotal = 0;
+    for (let i = 1; i < leadRows.length; i++) {
+      const r = leadRows[i]; if (!r || r.length < 4) continue;
+      const phone = normPhone(r[1]);
+      // find the long meta ids (15+ digits) in the row
+      const ids = r.map(x => String(x || '').trim()).filter(x => /^\d{15,}$/.test(x));
+      const camp = ids[0] || '', adset = ids[1] || '', ad = ids[2] || '';
+      if (!phone && !camp) continue;
+      leadTotal++;
+      if (phone && !leadByPhone[phone]) leadByPhone[phone] = { camp, adset, ad, name: (r[0] || '').trim() };
+      if (camp) leadCountByCamp[camp] = (leadCountByCamp[camp] || 0) + 1;
+    }
+
+    // ── Sheet 1: Sales log ──  DATE, NAME, PHONE, STATUS(agent|Customer), AMOUNT(MXN), NOTES
+    const agentStats = {};   // agent -> {deals, mxn}
+    const campSales = {};    // campId -> {deals, mxn}
+    let salesTotal = 0, revenueMXN = 0, matched = 0, unmatched = 0;
+    const sampleSales = [];
+    // Layout (data, not header): DATE | NAME | PHONE | STATUS(agent|Customer) | AMOUNT(MXN) | …
+    for (let i = 1; i < saleRows.length; i++) {
+      const r = saleRows[i]; if (!r || !r.length) continue;
+      const cells = r.map(x => String(x || '').trim());
+      const isDate = c => /^\d{4}-\d{2}-\d{2}/.test(c);
+      // phone = a cell whose digit-count is 10-13 and is NOT a date
+      let phoneIdx = -1;
+      for (let j = 0; j < cells.length; j++) {
+        if (isDate(cells[j])) continue;
+        const d = cells[j].replace(/\D/g, '');
+        if (d.length >= 10 && d.length <= 13) { phoneIdx = j; break; }
+      }
+      const phone = phoneIdx >= 0 ? normPhone(cells[phoneIdx]) : '';
+      // agent/status = first non-empty cell after phone
+      const status = phoneIdx >= 0 ? (cells.slice(phoneIdx + 1).find(c => c && /[A-Za-z]/.test(c) && !/^https?:/.test(c)) || '') : '';
+      // amount = numeric cell after phone that is NOT a date, NOT the phone, plausible (<= 1,000,000)
+      let amt = 0;
+      for (let j = phoneIdx + 1; j < cells.length; j++) {
+        const c = cells[j];
+        if (isDate(c)) continue;
+        if (/[A-Za-z]/.test(c)) continue;            // skip agent text & notes
+        const n = num(c);
+        if (n > 0 && n <= 1000000 && c.replace(/\D/g, '') !== cells[phoneIdx]?.replace(/\D/g, '')) { amt = n; break; }
+      }
+      if (!phone && !amt && !status) continue;
+      salesTotal++;
+      revenueMXN += amt;
+      const agent = /customer/i.test(status) ? 'Unknown' : (status || 'Unknown');
+      agentStats[agent] = agentStats[agent] || { deals: 0, mxn: 0 };
+      agentStats[agent].deals++; agentStats[agent].mxn += amt;
+      const attr = phone ? leadByPhone[phone] : null;
+      if (attr && attr.camp) {
+        matched++;
+        campSales[attr.camp] = campSales[attr.camp] || { deals: 0, mxn: 0 };
+        campSales[attr.camp].deals++; campSales[attr.camp].mxn += amt;
+      } else unmatched++;
+      if (sampleSales.length < 5) sampleSales.push({ phone: phone ? '…' + phone.slice(-4) : '(none)', amt, agent, attributed: !!(attr && attr.camp) });
+    }
+
+    // ── Meta spend by campaign (last 90d) ──
+    const until = new Date().toISOString().split('T')[0];
+    const since = new Date(Date.now() - 90 * 864e5).toISOString().split('T')[0];
+    let campSpend = {}, campName = {};
+    try {
+      const ins = extractText(await mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'campaign', time_range: { since, until } }));
+      const list = ins?.data || (Array.isArray(ins) ? ins : []);
+      for (const c of list) { campSpend[c.campaign_id] = parseFloat(c.spend || 0); campName[c.campaign_id] = c.campaign_name; }
+    } catch (e) { /* spend optional */ }
+
+    // ── Per-campaign ROI ──
+    const campaigns = Object.keys({ ...campSales, ...leadCountByCamp, ...campSpend }).map(id => {
+      const s = campSales[id] || { deals: 0, mxn: 0 };
+      const spendUSD = campSpend[id] || 0;
+      const revUSD = s.mxn / rate;
+      const leads = leadCountByCamp[id] || 0;
+      return {
+        id, name: campName[id] || id,
+        leads, sales: s.deals,
+        convRate: leads ? (s.deals / leads * 100) : 0,
+        revenueUSD: revUSD,
+        spendUSD,
+        costPerSale: s.deals ? spendUSD / s.deals : null,
+        roas: spendUSD ? revUSD / spendUSD : null
+      };
+    }).filter(c => c.spendUSD > 0 || c.sales > 0 || c.leads > 0)
+      .sort((a, b) => (b.roas || -1) - (a.roas || -1));
+
+    const agents = Object.entries(agentStats).map(([name, v]) => ({
+      name, deals: v.deals, revenueUSD: v.mxn / rate, avgTicketUSD: v.deals ? (v.mxn / rate / v.deals) : 0
+    })).sort((a, b) => b.revenueUSD - a.revenueUSD);
+
+    res.json({
+      configured: true,
+      rate,
+      totals: {
+        leads: leadTotal, sales: salesTotal,
+        revenueUSD: revenueMXN / rate, revenueMXN,
+        matched, unmatched,
+        matchRate: salesTotal ? (matched / salesTotal * 100) : 0
+      },
+      campaigns, agents, sampleSales
+    });
+  } catch (e) {
+    res.status(500).json({ configured: true, error: e.message });
+  }
 });
 
 // --- Media Library ---
