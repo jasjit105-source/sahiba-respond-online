@@ -858,10 +858,36 @@ app.post('/api/duplicate-with-schedule', async (req, res) => {
     const newAdset = extractText(await mcpCall('create_adset', createArgs));
     const newAdsetId = newAdset?.id || newAdset?.adset_id;
     if (!newAdsetId) return res.status(500).json({ error: 'Failed to create scheduled ad set', detail: newAdset, steps });
-    steps.push(`Created new ad set ${newAdsetId} (lifetime $${lifetime_budget}, PAUSED, scheduled)`);
+    steps.push(`Created new ad set ${newAdsetId} (lifetime $${lifetime_budget}, PAUSED)`);
+
+    // 2b. Meta IGNORES adset_schedule on creation — must be set via a follow-up
+    //     update once the ad set exists with a lifetime budget. Apply + verify.
+    let scheduleApplied = false, scheduleError = null;
+    try {
+      const upd = extractText(await mcpCall('update_adset', {
+        adset_id: newAdsetId,
+        pacing_type: ['day_parting'],
+        adset_schedule: schedule
+      }));
+      // NOTE: get_adset_details does NOT return the adset_schedule field, so we
+      // can't read the grid back. Verify via update success + pacing_type flip
+      // to 'day_parting' (which IS returned) — that proves the call took effect.
+      const updOk = upd && (upd.success === true || (!upd.error && !upd.isError));
+      const chk = extractText(await mcpCall('get_adset_details', { adset_id: newAdsetId }));
+      const pacing = chk && chk.pacing_type;
+      const dayparting = Array.isArray(pacing) && pacing.includes('day_parting');
+      scheduleApplied = !!(updOk && dayparting);
+      if (!scheduleApplied) scheduleError = (upd && (upd.error || upd.isError)) ? JSON.stringify(upd.error || upd) : 'pacing_type did not switch to day_parting';
+      steps.push(scheduleApplied
+        ? `Applied dayparting schedule (${schedule.length} block(s)); update success + pacing_type=day_parting confirmed`
+        : `WARNING: schedule did not stick — ${scheduleError}`);
+    } catch (e) {
+      scheduleError = e.message;
+      steps.push(`WARNING: schedule update failed — ${e.message}`);
+    }
 
     // 3. Clone each ad (reuse existing creative → keeps post + social proof)
-    const adsRaw = extractText(await mcpCall('get_ads', { adset_id }));
+    const adsRaw = extractText(await mcpCall('get_ads', { account_id: AD_ACCOUNT_ID, adset_id }));
     const ads = adsRaw?.data || (Array.isArray(adsRaw) ? adsRaw : []);
     const adResults = [];
     for (const ad of ads) {
@@ -886,10 +912,36 @@ app.post('/api/duplicate-with-schedule', async (req, res) => {
       ok: true,
       original_adset: { id: adset_id, name: orig.name, untouched: true },
       new_adset: { id: newAdsetId, name: newName, status: 'PAUSED', lifetime_budget, end_time },
-      schedule, ads: adResults, steps
+      schedule, schedule_applied: scheduleApplied, schedule_error: scheduleError, ads: adResults, steps
     });
   } catch (e) {
     res.status(500).json({ error: e.message, steps });
+  }
+});
+
+// Repair: apply (or replace) a dayparting schedule on an EXISTING lifetime ad set.
+// No budget changes — only pacing_type + adset_schedule. Verifies it stuck on Meta.
+app.post('/api/repair-schedule', async (req, res) => {
+  const { adset_id, on_hours, days } = req.body;
+  if (!adset_id) return res.status(400).json({ error: 'adset_id required' });
+  if (!on_hours || !on_hours.length) return res.status(400).json({ error: 'on_hours required' });
+  const schedule = buildSchedule(on_hours, days);
+  try {
+    const upd = extractText(await mcpCall('update_adset', {
+      adset_id, pacing_type: ['day_parting'], adset_schedule: schedule
+    }));
+    const updOk = upd && (upd.success === true || (!upd.error && !upd.isError));
+    const chk = extractText(await mcpCall('get_adset_details', { adset_id }));
+    const pacing = chk && chk.pacing_type;
+    const applied = !!(updOk && Array.isArray(pacing) && pacing.includes('day_parting'));
+    res.json({
+      ok: applied, adset_id, name: chk?.name, schedule,
+      pacing_type: pacing || null,
+      note: 'adset_schedule is not readable via the API client; verified via update success + pacing_type=day_parting. Confirm the grid visually in Ads Manager.',
+      error: applied ? null : ((upd && (upd.error || upd.isError)) ? JSON.stringify(upd.error || upd) : 'pacing_type did not switch to day_parting')
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, attempted_schedule: schedule });
   }
 });
 
