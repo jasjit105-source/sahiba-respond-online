@@ -22,6 +22,7 @@ export const api = {
   getSqlROI: (days) => request('GET', `/sql-roi?days=${days || 90}`),
   getGeoROI: (days) => request('GET', `/geo-roi?days=${days || 90}`),
   getDailyHealth: () => request('GET', '/daily-health'),
+  adsetAction: (data) => request('POST', '/adset-action', data),
   getMetaCampaigns: () => request('GET', '/meta-campaigns'),
   promoteIgPost: (data) => request('POST', '/promote-ig-post', data),
   getSettings: () => request('GET', '/settings'),

@@ -955,6 +955,40 @@ app.post('/api/repair-schedule', async (req, res) => {
   }
 });
 
+// ─── ONE-CLICK ALERT ACTIONS ───
+// Single endpoint that resolves the four routine fixes for Daily Health alerts.
+// Every UI button confirms with the user via window.confirm() before calling this.
+//   action='pause'      → status=PAUSED
+//   action='extend'     → add lifetime budget (cents) + extend end_time by N days
+//   action='set_daily'  → set new daily_budget (replaces, in USD)
+//   action='resume'     → status=ACTIVE
+app.post('/api/adset-action', async (req, res) => {
+  const { adset_id, action, add_usd, days, set_daily_usd } = req.body;
+  if (!adset_id || !action) return res.status(400).json({ error: 'adset_id + action required' });
+  try {
+    const args = { adset_id };
+    if (action === 'pause') args.status = 'PAUSED';
+    else if (action === 'resume') args.status = 'ACTIVE';
+    else if (action === 'extend') {
+      const cur = extractText(await mcpCall('get_adset_details', { adset_id }));
+      if (!cur || cur.error) return res.status(500).json({ error: 'could not read ad set', detail: cur });
+      const curLifetime = parseInt(cur.lifetime_budget || 0);
+      const addCents = Math.round(parseFloat(add_usd || 350) * 100);
+      const dayCount = parseInt(days || 14);
+      args.lifetime_budget = curLifetime + addCents;
+      args.end_time = new Date(Date.now() + dayCount * 86400000).toISOString().replace(/\.\d+Z$/, '-0600');
+    }
+    else if (action === 'set_daily') args.daily_budget = Math.round(parseFloat(set_daily_usd || 5) * 100);
+    else return res.status(400).json({ error: 'unknown action: ' + action });
+    const r = extractText(await mcpCall('update_adset', args));
+    // success requires an explicit positive marker — Meta error strings can otherwise pass the
+    // lax (!error && !isError) check because extractText returns a string for some failures.
+    const rStr = typeof r === 'string' ? r : JSON.stringify(r || {});
+    const ok = (r && r.success === true) || /"success"\s*:\s*true/i.test(rStr);
+    res.json({ ok, action, adset_id, applied: args, meta_response: r });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── PROMOTE IG POST WIZARD ───
 // Workflow: user pastes IG post URL → wizard creates one PAUSED ad set per city,
 // each with creative pointing to the existing IG post. Follows the [TEST]-City-IGpost-Date

@@ -1162,12 +1162,24 @@ function PromoteIgTab() {
 function DailyHealthTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
     api.getDailyHealth().then(setData).catch(e => setData({ ok: false, error: e.message })).finally(() => setLoading(false));
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const doAction = async (adsetId, name, action, params = {}, confirmMsg) => {
+    if (!window.confirm(`${confirmMsg}\n\nAd set: ${name}\n\nThis WILL change your live Meta ad set. Proceed?`)) return;
+    setBusy(adsetId + '::' + action);
+    try {
+      const r = await api.adsetAction({ adset_id: adsetId, action, ...params });
+      if (r.ok) { alert(`✅ ${action} applied to ${name}`); load(); }
+      else alert(`❌ Failed: ${JSON.stringify(r).slice(0, 240)}`);
+    } catch (e) { alert(`❌ ${e.message}`); }
+    setBusy('');
+  };
 
   if (loading) return <div className="ld"><div className="sp"></div><p>Running daily health check (pulls 24h + 7d spend on each ACTIVE ad set — ~30s)…</p></div>;
   if (!data || !data.ok) return <div className="sec"><h2 className="sh">Daily Health</h2><div className="err">Error: {data?.error || 'no data'}</div></div>;
@@ -1193,17 +1205,43 @@ function DailyHealthTab() {
       {data.alerts.length > 0 && (
         <div className="sec">
           <h2 className="sh">⚠️ Alerts — needs your attention</h2>
-          {data.alerts.map(a => (
-            <div key={a.id} style={{ background: 'var(--as)', padding: '.75rem 1rem', borderRadius: 6, marginBottom: '.5rem' }}>
-              <div style={{ fontWeight: 700, marginBottom: '.3rem' }}>{a.name}</div>
-              {a.flags.map((f, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', margin: '.25rem 0', fontSize: '.85rem' }}>
-                  <span style={{ background: tierBg[f.tier], color: '#000', padding: '1px 7px', borderRadius: 3, fontSize: '.7rem', fontWeight: 700, minWidth: 70, textAlign: 'center' }}>{f.tier}</span>
-                  <span style={{ color: 'var(--at)' }}>{f.msg}</span>
+          <p style={{ fontSize: '.72rem', color: 'var(--at3)', marginBottom: '.5rem' }}>Click an action button to resolve immediately. Every action confirms before touching Meta.</p>
+          {data.alerts.map(a => {
+            // Build action set based on tier mix
+            const tiers = new Set(a.flags.map(f => f.tier));
+            const actions = [];
+            if (tiers.has('EXPIRING')) {
+              actions.push({ label: '⏰ Extend +14d, top up $350', action: 'extend', params: { add_usd: 350, days: 14 }, confirm: `Extend lifetime budget by $350 and push end date 14 days out.` });
+              actions.push({ label: '⏰ Extend +30d, top up $750', action: 'extend', params: { add_usd: 750, days: 30 }, confirm: `Extend lifetime budget by $750 and push end date 30 days out.` });
+            }
+            if (tiers.has('STUCK') || tiers.has('IDLE')) {
+              actions.push({ label: '💸 Drop daily to $5', action: 'set_daily', params: { set_daily_usd: 5 }, confirm: `Lower daily budget to $5 to test if Meta will deliver smaller. Often unsticks delivery without losing the ad set.` });
+            }
+            actions.push({ label: '🛑 Pause this ad set', action: 'pause', confirm: `Pause this ad set entirely. Frees its budget. You can resume later from Ads Manager.` });
+
+            return (
+              <div key={a.id} style={{ background: 'var(--as)', padding: '.75rem 1rem', borderRadius: 6, marginBottom: '.5rem' }}>
+                <div style={{ fontWeight: 700, marginBottom: '.3rem' }}>{a.name}</div>
+                {a.flags.map((f, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', margin: '.25rem 0', fontSize: '.85rem' }}>
+                    <span style={{ background: tierBg[f.tier], color: '#000', padding: '1px 7px', borderRadius: 3, fontSize: '.7rem', fontWeight: 700, minWidth: 70, textAlign: 'center' }}>{f.tier}</span>
+                    <span style={{ color: 'var(--at)' }}>{f.msg}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.6rem', paddingTop: '.5rem', borderTop: '1px solid var(--abdr)' }}>
+                  {actions.map((act, j) => {
+                    const isBusy = busy === a.id + '::' + act.action;
+                    return (
+                      <button key={j} disabled={!!busy} onClick={() => doAction(a.id, a.name, act.action, act.params, act.confirm)}
+                        style={{ background: act.action === 'pause' ? 'var(--red)' : act.action === 'extend' ? 'var(--gold)' : 'var(--blu)', color: act.action === 'pause' ? '#fff' : '#000', border: 'none', padding: '.4rem .8rem', borderRadius: 5, fontSize: '.78rem', fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: busy && !isBusy ? .4 : 1 }}>
+                        {isBusy ? '...' : act.label}
+                      </button>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       )}
 
