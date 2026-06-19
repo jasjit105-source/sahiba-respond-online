@@ -2691,6 +2691,23 @@ app.post('/api/bulk-publish', async (req, res) => {
   if (!campaignList && req.body.campaign) campaignList = [req.body.campaign];
   if (!campaignList || campaignList.length === 0) return res.status(400).json({ error: 'No campaigns to publish' });
 
+  // ═══ HARD POLICY GUARD — Sahiba runs IG-first ═══
+  // Reject the WHOLE request up-front if any ad lacks object_story_id (= existing IG post).
+  // This prevents creating orphan campaigns/ad sets on Meta before the per-ad guard fires.
+  // See memory: project_instagram_first_workflow.md.
+  const bad = [];
+  for (const camp of campaignList) {
+    for (const adset of (camp.adsets || [])) {
+      for (const ad of (adset.ads || [])) {
+        if (!ad.object_story_id) bad.push(`${camp.name || 'unnamed-campaign'} → ${adset.name || 'unnamed-adset'} → ${ad.name || 'unnamed-ad'}`);
+      }
+    }
+  }
+  if (bad.length) return res.status(400).json({
+    error: 'SAHIBA POLICY: every ad must reference an existing Instagram post (object_story_id). Raw image/video ads are not allowed. Use the Promote IG tab.',
+    offenders: bad
+  });
+
   // Get page_id from settings or fetch it
   let pageId = null;
   const pageSetting = get("SELECT value FROM settings WHERE key = 'page_id'");
@@ -2860,7 +2877,14 @@ app.post('/api/bulk-publish', async (req, res) => {
                 continue;
               }
 
-              // ═══ CREATE NEW AD FROM ASSETS ═══
+              // ═══ HARD POLICY GUARD — Sahiba runs IG-first ═══
+              // Every ad MUST reference an existing Instagram post (object_story_id).
+              // Raw image/video upload is REFUSED to enforce the Instagram-first workflow.
+              // See memory: project_instagram_first_workflow.md.
+              adResults.push({ name: ad.name, error: 'POLICY: Sahiba ads must reference an existing Instagram post (object_story_id). Raw image/video ads are not allowed. Use the Promote IG tab.' });
+              console.log(`        REFUSED: no object_story_id — Sahiba policy requires existing IG post`);
+              continue;
+              /* eslint-disable */
               const adAssets = ad.assets || [];
               const imageAssets = adAssets.filter(a => a.type === 'image' || a.type === 'ig_post');
               const fallbackUrl = ad.creative?.image_url;
