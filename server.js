@@ -1316,6 +1316,26 @@ app.get('/api/sql-roi', async (req, res) => {
       walkinOrders: v.walkinTk.size, walkinRevUSD: v.walkinMXN / rate
     })).sort((a, b) => (b.onlineRevUSD + b.adWalkinRevUSD) - (a.onlineRevUSD + a.adWalkinRevUSD));
 
+    // CDMX walk-in attribution — the "walkinMXN" bucket (non-agent, no FB-lead phone match,
+    // not gift) is almost entirely Leona Vicario + Circunvalación store walk-in revenue, which
+    // is driven by the Mixcalco-radius ad sets. Pull those ad sets' spend and compute a real
+    // ROAS for the CDMX walk-in channel.
+    const mixcalcoIds = setting('mixcalco_adset_ids').split(',').map(s => s.trim()).filter(Boolean);
+    let mixcalcoSpendUSD = 0, mixcalcoSpendByAdset = [];
+    if (mixcalcoIds.length) {
+      const until = new Date().toISOString().slice(0, 10);
+      for (const id of mixcalcoIds) {
+        try {
+          const ins = extractText(await mcpCall('get_insights', { object_id: id, time_range: { since, until } }));
+          const sp = (ins?.data || []).reduce((a, r) => a + (parseFloat(r.spend) || 0), 0);
+          mixcalcoSpendUSD += sp;
+          mixcalcoSpendByAdset.push({ adset_id: id, spendUSD: sp });
+        } catch (e) { mixcalcoSpendByAdset.push({ adset_id: id, error: e.message }); }
+      }
+    }
+    const cdmxAdWalkinUSD = walkinMXN / rate;
+    const mixcalcoROAS = mixcalcoSpendUSD > 0 ? cdmxAdWalkinUSD / mixcalcoSpendUSD : null;
+
     res.json({
       ok: true, days, rate, since,
       totals: {
@@ -1324,7 +1344,10 @@ app.get('/api/sql-roi', async (req, res) => {
         adWalkinRevUSD: adWalkinMXN / rate, adWalkinRevMXN: adWalkinMXN,
         adWalkinTickets: Object.values(tickets).filter(t => t.channel === 'ad_walkin').length,
         giftRevUSD, giftRevMXN, giftTickets, giftCustomers: giftPhones.size,
-        adDrivenRevUSD: (onlineMXN + adWalkinMXN + giftRevMXN) / rate,
+        // NEW: CDMX walk-in attributed to Mixcalco ads (the bulk of "Other walk-in")
+        cdmxAdWalkinRevMXN: walkinMXN, cdmxAdWalkinRevUSD: cdmxAdWalkinUSD,
+        mixcalcoSpendUSD, mixcalcoROAS, mixcalcoSpendByAdset,
+        adDrivenRevUSD: (onlineMXN + adWalkinMXN + giftRevMXN + walkinMXN) / rate,
         ticketCount: Object.keys(tickets).length, lineCount: lines.length
       },
       campaigns, agents

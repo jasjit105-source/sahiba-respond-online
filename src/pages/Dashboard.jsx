@@ -1022,12 +1022,14 @@ function HourTab({ hourRich }) {
 // ═══ SALES & ROI TAB ═══
 function GeoROITab() {
   const [data, setData] = useState(null);
+  const [sql, setSql] = useState(null);
   const [days, setDays] = useState(90);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback((d) => {
-    setLoading(true);
+    setLoading(true); setSql(null);
     api.getGeoROI(d).then(setData).catch(e => setData({ ok: false, error: e.message })).finally(() => setLoading(false));
+    api.getSqlROI(d).then(setSql).catch(e => setSql({ ok: false, error: e.message }));   // slower, runs in parallel; CDMX block shows when ready
   }, []);
   useEffect(() => { load(days); }, [load, days]);
 
@@ -1067,9 +1069,30 @@ function GeoROITab() {
           </span>
         </div>
 
-        <div className="snap-info" style={{ marginBottom: '1rem', borderLeftColor: 'var(--gold)' }}>
-          <b style={{ color: 'var(--gold)' }}>⚠️ CDMX caveat — read before acting</b>
-          <p style={{ margin: '.4rem 0 0', fontSize: '.78rem' }}>{data.caveat}</p>
+        <div className="snap-info" style={{ marginBottom: '1rem', borderLeftColor: 'var(--grn)' }}>
+          <b style={{ color: 'var(--grn)' }}>🏙️ CDMX — the highest-ROAS geo in the account (don't read the table row for CDMX)</b>
+          <p style={{ margin: '.4rem 0 .75rem', fontSize: '.78rem' }}>
+            CDMX is critical, not a candidate for cuts. Both stores (Leona Vicario, Circunvalación) are in CDMX, so most CDMX customers <b>walk in</b> without leaving a phone — they never appear in the LADA/phone-match table below. Real attribution is via store walk-in revenue ÷ Mixcalco ad spend.
+          </p>
+          {sql && sql.ok && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '.6rem', marginTop: '.5rem' }}>
+              <div style={{ background: 'var(--as2)', padding: '.5rem .65rem', borderRadius: 6 }}>
+                <div style={{ fontSize: '.65rem', color: 'var(--at2)', textTransform: 'uppercase' }}>CDMX walk-in revenue</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--grn)' }}>{$u(sql.totals.cdmxAdWalkinRevUSD || 0)}</div>
+                <div style={{ fontSize: '.68rem', color: 'var(--at3)' }}>{(Math.round(sql.totals.cdmxAdWalkinRevMXN || 0)).toLocaleString('en-US')} MXN · {sql.days}d</div>
+              </div>
+              <div style={{ background: 'var(--as2)', padding: '.5rem .65rem', borderRadius: 6 }}>
+                <div style={{ fontSize: '.65rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Mixcalco ad spend</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--at)' }}>{$u(sql.totals.mixcalcoSpendUSD || 0)}</div>
+                <div style={{ fontSize: '.68rem', color: 'var(--at3)' }}>4 ad sets · 40–50mi CDMX radius</div>
+              </div>
+              <div style={{ background: 'var(--as2)', padding: '.5rem .65rem', borderRadius: 6 }}>
+                <div style={{ fontSize: '.65rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Mixcalco ROAS</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--gold)' }}>{sql.totals.mixcalcoROAS ? sql.totals.mixcalcoROAS.toFixed(1) + '×' : '—'}</div>
+                <div style={{ fontSize: '.68rem', color: 'var(--at3)' }}>highest-ROAS geo in the account</div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="kr">
@@ -1189,8 +1212,9 @@ function SalesROITab() {
             <div className="k"><div className="l">Online Revenue</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.onlineRevUSD, 0)}</div><div className="s">{fmt(T.onlineRevMXN, 0)} MXN @ {sql.rate} · agent online</div></div>
             <div className="k"><div className="l">In-Store from FB Lead</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.adWalkinRevUSD || 0, 0)}</div><div className="s">{fmt(T.adWalkinTickets || 0)} tickets · walk-in phone = FB lead</div></div>
             <div className="k"><div className="l">Store-Gift Revenue</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.giftRevUSD || 0, 0)}</div><div className="s">{fmt(T.giftTickets || 0)} tickets · 126OB/130OB · FB walk-in</div></div>
-            <div className="k"><div className="l">Ad-Driven Total</div><div className="v" style={{ color: 'var(--gold)' }}>{$(T.adDrivenRevUSD || T.onlineRevUSD, 0)}</div><div className="s">online + in-store FB lead + store-gift</div></div>
-            <div className="k"><div className="l">Other Walk-in</div><div className="v">{$(T.walkinRevUSD, 0)}</div><div className="s">{fmt(T.walkinRevMXN, 0)} MXN · not ad-tagged</div></div>
+            <div className="k"><div className="l">CDMX Ad Walk-in (Mixcalco)</div><div className="v" style={{ color: 'var(--grn)' }}>{$(T.cdmxAdWalkinRevUSD || T.walkinRevUSD, 0)}</div><div className="s">{fmt(T.cdmxAdWalkinRevMXN || T.walkinRevMXN, 0)} MXN · Leona+Cercu walk-in · Mixcalco ROAS {T.mixcalcoROAS ? T.mixcalcoROAS.toFixed(1) + '×' : '—'}</div></div>
+            <div className="k"><div className="l">Mixcalco Ad Spend</div><div className="v" style={{ color: 'var(--at2)' }}>{$(T.mixcalcoSpendUSD || 0, 0)}</div><div className="s">4 ad sets · 90d · drives the walk-in column</div></div>
+            <div className="k"><div className="l">Ad-Driven Total</div><div className="v" style={{ color: 'var(--gold)' }}>{$(T.adDrivenRevUSD || T.onlineRevUSD, 0)}</div><div className="s">online + FB lead + gift + CDMX walk-in</div></div>
             <div className="k"><div className="l">POS Tickets</div><div className="v">{fmt(T.ticketCount + (T.giftTickets || 0))}</div><div className="s">{fmt(T.lineCount)} line items</div></div>
             <div className="k"><div className="l">Total POS Revenue</div><div className="v">{$(T.onlineRevUSD + (T.adWalkinRevUSD || 0) + T.walkinRevUSD + (T.giftRevUSD || 0), 0)}</div><div className="s">online + FB lead + gift + walk-in</div></div>
           </div>
