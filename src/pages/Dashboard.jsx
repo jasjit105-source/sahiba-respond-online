@@ -1145,6 +1145,14 @@ function PromoteIgTab() {
       {/* Mode A: add_to_existing — multi-select ad sets */}
       {mode === 'add_to_existing' && (
         <div style={{ marginBottom: '1rem' }}>
+          <div className="snap-info" style={{ marginBottom: '.75rem', borderLeftColor: 'var(--gold)' }}>
+            <b style={{ color: 'var(--gold)' }}>⚠️ Known limitation — WhatsApp-funnel ad sets</b>
+            <p style={{ margin: '.4rem 0 0', fontSize: '.78rem' }}>
+              All Sahiba ad sets currently route to WhatsApp (<code>destination_type: WHATSAPP</code>). Pipeboard's API has a 6-parameter cap that prevents wiring up the WhatsApp CTA + wa.me link during creation, so Meta rejects the ad at publish with <i>"Invalid Creative For Objective"</i>.
+              <br/><br/>
+              <b>Workaround until the direct Meta Graph API path is built (task #17):</b> open Meta Ads Manager → find a working ad in the target ad set → right-click → <b>Duplicate</b> → click <b>Change post</b> → paste your IG reel URL → Publish. The WhatsApp wiring carries over automatically. 5 minutes per ad.
+            </p>
+          </div>
           <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Pick the ad set(s) to add this IG post to ({selectedAdsets.size} selected)</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.4rem' }}>
             {adsetList.length === 0 && <span style={{ color: 'var(--at3)', fontSize: '.78rem' }}>Loading ad sets…</span>}
