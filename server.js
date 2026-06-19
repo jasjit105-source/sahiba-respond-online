@@ -1500,6 +1500,87 @@ app.get('/api/geo-roi', async (req, res) => {
   }
 });
 
+// ─── Daily Health Check ───
+// One-pager that flags ad sets which need attention. Read-only, no auto-changes.
+// Conditions checked:
+//   STUCK    — daily budget ≥ $10 but 24h spend < $1 (Meta refusing delivery)
+//   DROPPING — 24h spend < 50% of 7-day average (sudden delivery drop)
+//   EXPIRING — lifetime budget end_time within next 3 days
+//   IDLE     — daily budget set but 7d spend < 10% of (budget × 7)
+app.get('/api/daily-health', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const wk = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const in3 = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+
+    const adsetsRaw = extractText(await mcpCall('get_adsets', { account_id: AD_ACCOUNT_ID }));
+    const all = adsetsRaw?.data || (Array.isArray(adsetsRaw) ? adsetsRaw : []);
+    const active = all.filter(a => a.status === 'ACTIVE' || a.effective_status === 'ACTIVE');
+
+    const checks = [];
+    let totalSpend24h = 0, totalSpend7d = 0;
+    for (const a of active) {
+      const dailyB = parseFloat(a.daily_budget || 0) / 100;
+      const lifetimeB = parseFloat(a.lifetime_budget || 0) / 100;
+      let spend24h = 0, spend7d = 0;
+      try {
+        const ins24 = extractText(await mcpCall('get_insights', { object_id: a.id, time_range: { since: yest, until: today } }));
+        spend24h = (ins24?.data || []).reduce((s, r) => s + (parseFloat(r.spend) || 0), 0);
+      } catch (e) {}
+      try {
+        const ins7 = extractText(await mcpCall('get_insights', { object_id: a.id, time_range: { since: wk, until: today } }));
+        spend7d = (ins7?.data || []).reduce((s, r) => s + (parseFloat(r.spend) || 0), 0);
+      } catch (e) {}
+      totalSpend24h += spend24h; totalSpend7d += spend7d;
+      const avg7d = spend7d / 7;
+      const flags = [];
+      if (dailyB >= 10 && spend24h < 1) flags.push({ tier: 'STUCK', msg: `daily budget $${dailyB} but only $${spend24h.toFixed(2)} spent yesterday — Meta refusing delivery` });
+      if (avg7d > 5 && spend24h < avg7d * 0.5) flags.push({ tier: 'DROPPING', msg: `yesterday $${spend24h.toFixed(2)} vs 7-day avg $${avg7d.toFixed(2)} — ${Math.round(100 * (1 - spend24h / avg7d))}% drop` });
+      if (lifetimeB > 0 && a.end_time && a.end_time.slice(0, 10) <= in3) flags.push({ tier: 'EXPIRING', msg: `lifetime budget ends ${a.end_time.slice(0, 10)} — top up or it stops delivery` });
+      if (dailyB > 0 && spend7d < dailyB * 7 * 0.1) flags.push({ tier: 'IDLE', msg: `$${dailyB}/day declared but only $${spend7d.toFixed(2)} spent over 7d — barely running` });
+      checks.push({ id: a.id, name: a.name, dailyBudget: dailyB, lifetimeBudget: lifetimeB, endTime: a.end_time || null, spend24h, spend7d, avg7d, flags });
+    }
+    const alerts = checks.filter(c => c.flags.length).sort((a, b) => b.flags.length - a.flags.length);
+
+    // Persist a daily snapshot HTML (also returned in JSON for the tab)
+    const reportPath = `${process.cwd()}/db/daily-reports/${today}.html`;
+    try {
+      if (!existsSync(`${process.cwd()}/db/daily-reports`)) mkdirSync(`${process.cwd()}/db/daily-reports`, { recursive: true });
+      const tierColor = { STUCK: '#d33', DROPPING: '#e80', EXPIRING: '#ee0', IDLE: '#888' };
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Sahiba Daily Health ${today}</title>
+<style>body{font-family:-apple-system,system-ui,sans-serif;max-width:780px;margin:1rem auto;padding:1rem;background:#0a0a0a;color:#eee}
+h1{color:#e6c46c}h2{color:#e6c46c;border-bottom:1px solid #444;padding-bottom:.3rem}
+.k{display:inline-block;margin:.3rem;padding:.5rem .8rem;background:#1a1a1a;border-radius:6px;min-width:140px}
+.k .l{font-size:.7rem;color:#888;text-transform:uppercase}.k .v{font-size:1.4rem;font-weight:700}
+.alert{margin:.4rem 0;padding:.6rem .8rem;background:#1a1a1a;border-left:4px solid;border-radius:4px}
+.tier{display:inline-block;padding:1px 6px;border-radius:3px;font-size:.7rem;font-weight:700;color:#000;margin-right:.5rem}
+table{width:100%;border-collapse:collapse;font-size:.85rem}td,th{padding:.3rem .5rem;border-bottom:1px solid #333;text-align:left}</style>
+</head><body>
+<h1>Sahiba Daily Health — ${today}</h1>
+<div><div class="k"><div class="l">Yesterday spend</div><div class="v">$${totalSpend24h.toFixed(2)}</div></div>
+<div class="k"><div class="l">7-day spend</div><div class="v">$${totalSpend7d.toFixed(2)}</div></div>
+<div class="k"><div class="l">Daily avg (7d)</div><div class="v">$${(totalSpend7d / 7).toFixed(2)}</div></div>
+<div class="k"><div class="l">Alerts</div><div class="v" style="color:${alerts.length ? '#f55' : '#5d5'}">${alerts.length}</div></div></div>
+<h2>Alerts</h2>${alerts.length ? alerts.map(c => c.flags.map(f => `<div class="alert" style="border-color:${tierColor[f.tier]}"><span class="tier" style="background:${tierColor[f.tier]}">${f.tier}</span><b>${c.name}</b><br>${f.msg}</div>`).join('')).join('') : '<p style="color:#5d5">✓ All ad sets healthy — nothing to do.</p>'}
+<h2>All ACTIVE ad sets</h2><table><tr><th>Ad Set</th><th>Daily $</th><th>24h $</th><th>7d $</th><th>Flags</th></tr>${checks.map(c => `<tr><td>${c.name}</td><td>$${c.dailyBudget.toFixed(0)}</td><td>$${c.spend24h.toFixed(2)}</td><td>$${c.spend7d.toFixed(2)}</td><td>${c.flags.map(f => f.tier).join(', ') || '—'}</td></tr>`).join('')}</table>
+<p style="color:#666;font-size:.75rem;margin-top:2rem">Generated ${new Date().toISOString()} · No auto-changes made · This is a read-only health check.</p>
+</body></html>`;
+      writeFileSync(reportPath, html);
+    } catch (e) { console.error('report write failed:', e.message); }
+
+    res.json({
+      ok: true, date: today,
+      totalSpend24h, totalSpend7d, avgDaily7d: totalSpend7d / 7,
+      activeCount: active.length, alertCount: alerts.length,
+      alerts, all: checks,
+      reportPath: reportPath.replace(process.cwd(), '')
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/api/sales-roi', async (req, res) => {
   try {
     const leadsUrl = setting('sheet_leads_url');

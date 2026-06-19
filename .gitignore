@@ -13,3 +13,4 @@ dist/
 # Netlify
 .netlify/
 db/respond_contacts.csv
+db/daily-reports/

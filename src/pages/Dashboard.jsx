@@ -1020,6 +1020,79 @@ function HourTab({ hourRich }) {
 }
 
 // ═══ SALES & ROI TAB ═══
+function DailyHealthTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getDailyHealth().then(setData).catch(e => setData({ ok: false, error: e.message })).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <div className="ld"><div className="sp"></div><p>Running daily health check (pulls 24h + 7d spend on each ACTIVE ad set — ~30s)…</p></div>;
+  if (!data || !data.ok) return <div className="sec"><h2 className="sh">Daily Health</h2><div className="err">Error: {data?.error || 'no data'}</div></div>;
+
+  const $u = (v, dec = 2) => '$' + (v || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  const tierBg = { STUCK: 'var(--red)', DROPPING: 'var(--org)', EXPIRING: 'var(--gold)', IDLE: 'var(--at3)' };
+
+  return (
+    <>
+      <div className="sec">
+        <h2 className="sh">Daily Health Check — {data.date}</h2>
+        <p style={{ fontSize: '.78rem', color: 'var(--at2)', marginBottom: '.75rem' }}>
+          Read-only snapshot. No auto-changes. Flags ad sets that need your attention. Snapshot also saved to <code style={{ background: 'var(--as2)', padding: '1px 5px', borderRadius: 3 }}>{data.reportPath}</code>.
+        </p>
+        <div className="kr">
+          <div className="k"><div className="l">Yesterday spend</div><div className="v">{$u(data.totalSpend24h)}</div><div className="s">across {data.activeCount} ACTIVE ad sets</div></div>
+          <div className="k"><div className="l">7-day spend</div><div className="v">{$u(data.totalSpend7d)}</div><div className="s">avg {$u(data.avgDaily7d)}/day</div></div>
+          <div className="k"><div className="l">Alerts</div><div className="v" style={{ color: data.alertCount ? 'var(--red)' : 'var(--grn)' }}>{data.alertCount}</div><div className="s">{data.alertCount ? 'see below' : '✓ all healthy'}</div></div>
+          <div className="k"><div className="l">Projected month-end</div><div className="v">{$u(data.avgDaily7d * 30, 0)}</div><div className="s">at current pace</div></div>
+        </div>
+      </div>
+
+      {data.alerts.length > 0 && (
+        <div className="sec">
+          <h2 className="sh">⚠️ Alerts — needs your attention</h2>
+          {data.alerts.map(a => (
+            <div key={a.id} style={{ background: 'var(--as)', padding: '.75rem 1rem', borderRadius: 6, marginBottom: '.5rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: '.3rem' }}>{a.name}</div>
+              {a.flags.map((f, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '.5rem', margin: '.25rem 0', fontSize: '.85rem' }}>
+                  <span style={{ background: tierBg[f.tier], color: '#000', padding: '1px 7px', borderRadius: 3, fontSize: '.7rem', fontWeight: 700, minWidth: 70, textAlign: 'center' }}>{f.tier}</span>
+                  <span style={{ color: 'var(--at)' }}>{f.msg}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="sec">
+        <h2 className="sh">All ACTIVE ad sets</h2>
+        <div className="tw">
+          <table>
+            <thead><tr><th>Ad Set</th><th className="r">Daily $</th><th className="r">Lifetime $</th><th>End</th><th className="r">24h Spend</th><th className="r">7d Spend</th><th>Status</th></tr></thead>
+            <tbody>
+              {data.all.map(c => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td className="r">{c.dailyBudget ? '$' + c.dailyBudget.toFixed(0) : '—'}</td>
+                  <td className="r">{c.lifetimeBudget ? '$' + c.lifetimeBudget.toFixed(0) : '—'}</td>
+                  <td style={{ fontSize: '.75rem', color: 'var(--at3)' }}>{c.endTime ? c.endTime.slice(0, 10) : '—'}</td>
+                  <td className="r">{$u(c.spend24h)}</td>
+                  <td className="r">{$u(c.spend7d)}</td>
+                  <td>{c.flags.length ? c.flags.map(f => <span key={f.tier} style={{ background: tierBg[f.tier], color: '#000', padding: '1px 6px', borderRadius: 3, fontSize: '.65rem', fontWeight: 700, marginRight: 3 }}>{f.tier}</span>) : <span style={{ color: 'var(--grn)' }}>OK</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function GeoROITab() {
   const [data, setData] = useState(null);
   const [sql, setSql] = useState(null);
@@ -1618,12 +1691,13 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
 
           {tab === 'overview' && <OverviewTab camps={camps} avgCPR={avgCPR} funnel={funnel} weekly={weekly} totals={data.totals} dowRich={data.dowRich} ads={ads} nDays={nDays} />}
+          {tab === 'health' && <DailyHealthTab />}
           {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
           {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
           {tab === 'salesroi' && <SalesROITab />}

@@ -21,6 +21,7 @@ export const api = {
   getSalesROI: () => request('GET', '/sales-roi'),
   getSqlROI: (days) => request('GET', `/sql-roi?days=${days || 90}`),
   getGeoROI: (days) => request('GET', `/geo-roi?days=${days || 90}`),
+  getDailyHealth: () => request('GET', '/daily-health'),
   getSettings: () => request('GET', '/settings'),
   saveSettings: (data) => request('POST', '/settings', data),
 
