@@ -1065,14 +1065,23 @@ app.post('/api/promote-ig-post', async (req, res) => {
     // No new campaign, no new ad set, no budget change. One creative is reused across the ad sets.
     if (promoteMode === 'add_to_existing') {
       steps.push(`Mode: add_to_existing (${existing_adset_ids.length} ad set${existing_adset_ids.length > 1 ? 's' : ''})`);
+      const igUserId = setting('ig_user_id');
+      if (!igUserId && !dry_run) return res.status(400).json({ error: 'ig_user_id setting required to create IG-post creatives. Set it in the Promote IG tab.', steps });
       let creativeId = null;
       if (!dry_run) {
         const creative = extractText(await mcpCall('create_existing_post_ad_creative', {
-          account_id: AD_ACCOUNT_ID, page_id: pageId, source_instagram_media_id: igMediaId,
-          name: `IG${igMediaId.slice(-8)}-${dateTag}-creative`, call_to_action_type: 'MESSAGE_PAGE'
+          account_id: AD_ACCOUNT_ID, page_id: pageId,
+          source_instagram_media_id: igMediaId, instagram_user_id: igUserId,
+          name: `IG${igMediaId.slice(-8)}-${dateTag}-creative`
+          // NOTE: do NOT pass call_to_action_type when promoting an IG post — Meta
+          // inherits the CTA from the post itself and rejects override with "Invalid parameter".
         }));
-        creativeId = creative?.id || creative?.creative_id;
-        if (!creativeId) return res.status(500).json({ error: 'creative create failed', detail: creative, steps });
+        // Real Meta creative IDs are 15+ digit numeric strings — reject anything else.
+        const rawId = String(creative?.id || creative?.creative_id || '');
+        if (!/^\d{12,}$/.test(rawId)) {
+          return res.status(500).json({ error: 'creative create failed — no valid creative_id returned', detail: creative, steps });
+        }
+        creativeId = rawId;
         steps.push(`Created shared creative ${creativeId}`);
       } else { steps.push('DRY-RUN: would create shared creative'); }
 
@@ -1086,13 +1095,16 @@ app.post('/api/promote-ig-post', async (req, res) => {
           const ad = extractText(await mcpCall('create_ad', {
             account_id: AD_ACCOUNT_ID, adset_id: adsetId, name: newAdName, status: 'PAUSED', creative_id: creativeId
           }));
-          if (ad?.id) results.push({ adset_id: adsetId, adset_name: adsetName, ad_id: ad.id, ad_name: newAdName });
-          else results.push({ adset_id: adsetId, adset_name: adsetName, error: 'ad create failed', detail: ad });
-        } catch (e) { results.push({ adset_id: adsetId, error: e.message }); }
+          if (ad?.id) results.push({ adset_id: adsetId, adset_name: adsetName, ad_id: ad.id, ad_name: newAdName, ok: true });
+          else results.push({ adset_id: adsetId, adset_name: adsetName, error: 'ad create failed', detail: ad, ok: false });
+        } catch (e) { results.push({ adset_id: adsetId, error: e.message, ok: false }); }
       }
+      const anyFailed = results.some(r => r.ok === false || r.error);
       return res.json({
-        ok: true, mode: 'add_to_existing', ig_media_id: igMediaId, creative_id: creativeId, results, steps,
-        note: 'New ads created PAUSED inside your existing ad sets. Targeting + budget unchanged. Review and unpause in Meta Ads Manager.'
+        ok: !anyFailed, mode: 'add_to_existing', ig_media_id: igMediaId, creative_id: creativeId, results, steps,
+        note: anyFailed
+          ? 'One or more ads failed. See each row for the Meta error. Successful ads (if any) are PAUSED.'
+          : 'New ads created PAUSED inside your existing ad sets. Targeting + budget unchanged. Review and unpause in Meta Ads Manager.'
       });
     }
 
@@ -1137,9 +1149,13 @@ app.post('/api/promote-ig-post', async (req, res) => {
       if (!adsetId) { results.push({ city: cityName, error: 'adset create failed', detail: adset }); continue; }
 
       // 4b. Create creative from existing IG post
+      // NOTE: do NOT pass call_to_action_type when promoting an IG post — Meta inherits it
+      // from the post itself and rejects override with "Invalid parameter".
+      const igUserId = setting('ig_user_id');
       const creative = extractText(await mcpCall('create_existing_post_ad_creative', {
         account_id: AD_ACCOUNT_ID, page_id: pageId, source_instagram_media_id: igMediaId,
-        name: `${adsetName}-creative`, call_to_action_type: 'MESSAGE_PAGE'
+        instagram_user_id: igUserId,
+        name: `${adsetName}-creative`
       }));
       const creativeId = creative?.id || creative?.creative_id;
       if (!creativeId) { results.push({ city: cityName, adset_id: adsetId, error: 'creative create failed', detail: creative }); continue; }

@@ -1221,25 +1221,49 @@ function PromoteIgTab() {
       {/* Real result */}
       {result && (
         <div style={{ marginTop: '1.5rem', background: 'var(--as2)', padding: '1rem', borderRadius: 6, border: `1px solid ${result.ok ? 'var(--grn)' : 'var(--red)'}` }}>
-          <b style={{ color: result.ok ? 'var(--grn)' : 'var(--red)' }}>{result.ok ? '✅ Created on Meta (PAUSED)' : '❌ Error'}</b>
-          {result.ok && (<>
-            <p style={{ fontSize: '.78rem', color: 'var(--at2)', margin: '.4rem 0' }}>Campaign: <code>{result.campaign_id}</code> · IG media: <code>{result.ig_media_id}</code> · Each ad set: ${result.lifetime_budget_usd_each} lifetime, ends {result.end_time?.slice(0, 10)}</p>
-            <table style={{ width: '100%', marginTop: '.5rem', fontSize: '.78rem' }}>
-              <thead><tr><th align="left">City</th><th align="left">Ad Set</th><th align="left">Ad Set ID</th><th align="left">Status</th></tr></thead>
-              <tbody>
-                {result.results.map((r, i) => (
-                  <tr key={i}>
-                    <td>{r.city}</td>
-                    <td>{r.name || '—'}</td>
-                    <td><code style={{ fontSize: '.7rem' }}>{r.adset_id || '—'}</code></td>
-                    <td style={{ color: r.error ? 'var(--red)' : 'var(--grn)' }}>{r.error ? r.error : 'PAUSED'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p style={{ fontSize: '.75rem', color: 'var(--gold)', marginTop: '.6rem' }}>⚠️ {result.note}</p>
+          <b style={{ color: result.ok ? 'var(--grn)' : 'var(--red)' }}>
+            {result.ok ? '✅ Created on Meta (PAUSED)' : (result.error ? '❌ ' + result.error : '⚠️ Partial — see rows below')}
+          </b>
+          {result.results && (<>
+            <p style={{ fontSize: '.78rem', color: 'var(--at2)', margin: '.4rem 0' }}>
+              {result.mode === 'add_to_existing'
+                ? <>IG media: <code>{result.ig_media_id}</code> · Shared creative: <code>{result.creative_id || '—'}</code></>
+                : <>Campaign: <code>{result.campaign_id}</code> · IG media: <code>{result.ig_media_id}</code> · Each ad set: ${result.lifetime_budget_usd_each} lifetime, ends {result.end_time?.slice(0, 10)}</>
+              }
+            </p>
+            {result.mode === 'add_to_existing' ? (
+              <table style={{ width: '100%', marginTop: '.5rem', fontSize: '.78rem' }}>
+                <thead><tr><th align="left">Ad Set</th><th align="left">Ad Set ID</th><th align="left">New Ad Name</th><th align="left">Ad ID</th><th align="left">Status</th></tr></thead>
+                <tbody>
+                  {result.results.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.adset_name || '—'}</td>
+                      <td><code style={{ fontSize: '.7rem' }}>{r.adset_id}</code></td>
+                      <td>{r.ad_name || r.would_create_ad || '—'}</td>
+                      <td><code style={{ fontSize: '.7rem' }}>{r.ad_id || '—'}</code></td>
+                      <td style={{ color: r.error ? 'var(--red)' : 'var(--grn)' }}>{r.error || (r.dry_run ? '(dry-run)' : 'PAUSED')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table style={{ width: '100%', marginTop: '.5rem', fontSize: '.78rem' }}>
+                <thead><tr><th align="left">City</th><th align="left">Ad Set</th><th align="left">Ad Set ID</th><th align="left">Status</th></tr></thead>
+                <tbody>
+                  {result.results.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.city}</td>
+                      <td>{r.name || '—'}</td>
+                      <td><code style={{ fontSize: '.7rem' }}>{r.adset_id || '—'}</code></td>
+                      <td style={{ color: r.error ? 'var(--red)' : 'var(--grn)' }}>{r.error || (r.dry_run ? '(dry-run)' : 'PAUSED')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p style={{ fontSize: '.75rem', color: result.ok ? 'var(--gold)' : 'var(--red)', marginTop: '.6rem' }}>{result.ok ? '⚠️ ' : '❌ '}{result.note}</p>
           </>)}
-          {!result.ok && <pre style={{ fontSize: '.72rem' }}>{JSON.stringify(result, null, 2)}</pre>}
+          {!result.results && <pre style={{ fontSize: '.72rem' }}>{JSON.stringify(result, null, 2)}</pre>}
         </div>
       )}
     </div>
