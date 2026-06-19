@@ -1031,9 +1031,12 @@ async function resolveIgMedia(input) {
 }
 
 app.post('/api/promote-ig-post', async (req, res) => {
-  const { ig_post, cities, daily_budget_usd, days, campaign_id, product_hint, dry_run } = req.body;
+  const { ig_post, cities, daily_budget_usd, days, campaign_id, product_hint, dry_run,
+          mode, existing_adset_ids } = req.body;
   if (!ig_post) return res.status(400).json({ error: 'ig_post (URL or ID) required' });
-  if (!cities || !cities.length) return res.status(400).json({ error: 'at least one city required' });
+  const promoteMode = mode === 'add_to_existing' ? 'add_to_existing' : 'test';
+  if (promoteMode === 'test' && (!cities || !cities.length)) return res.status(400).json({ error: 'at least one city required for test mode' });
+  if (promoteMode === 'add_to_existing' && (!existing_adset_ids || !existing_adset_ids.length)) return res.status(400).json({ error: 'at least one existing_adset_ids required for add_to_existing mode' });
   const dailyBudget = parseFloat(daily_budget_usd || 5);
   const window = parseInt(days || 14);
   const lifetimeUSD = Math.round(dailyBudget * window * 100) / 100;       // $70 default
@@ -1058,6 +1061,42 @@ app.post('/api/promote-ig-post', async (req, res) => {
       steps.push('Post is boost-eligible');
     } catch (e) { steps.push(`Eligibility check skipped: ${e.message}`); }
 
+    // ═══ MODE: add_to_existing — just attach this IG post as a fresh ad to N existing ad sets ═══
+    // No new campaign, no new ad set, no budget change. One creative is reused across the ad sets.
+    if (promoteMode === 'add_to_existing') {
+      steps.push(`Mode: add_to_existing (${existing_adset_ids.length} ad set${existing_adset_ids.length > 1 ? 's' : ''})`);
+      let creativeId = null;
+      if (!dry_run) {
+        const creative = extractText(await mcpCall('create_existing_post_ad_creative', {
+          account_id: AD_ACCOUNT_ID, page_id: pageId, source_instagram_media_id: igMediaId,
+          name: `IG${igMediaId.slice(-8)}-${dateTag}-creative`, call_to_action_type: 'MESSAGE_PAGE'
+        }));
+        creativeId = creative?.id || creative?.creative_id;
+        if (!creativeId) return res.status(500).json({ error: 'creative create failed', detail: creative, steps });
+        steps.push(`Created shared creative ${creativeId}`);
+      } else { steps.push('DRY-RUN: would create shared creative'); }
+
+      const results = [];
+      for (const adsetId of existing_adset_ids) {
+        try {
+          const det = extractText(await mcpCall('get_adset_details', { adset_id: adsetId }));
+          const adsetName = det?.name || adsetId;
+          const newAdName = `${adsetName}-IG${igMediaId.slice(-6)}-${dateTag}`.slice(0, 100);
+          if (dry_run) { results.push({ adset_id: adsetId, adset_name: adsetName, dry_run: true, would_create_ad: newAdName }); continue; }
+          const ad = extractText(await mcpCall('create_ad', {
+            account_id: AD_ACCOUNT_ID, adset_id: adsetId, name: newAdName, status: 'PAUSED', creative_id: creativeId
+          }));
+          if (ad?.id) results.push({ adset_id: adsetId, adset_name: adsetName, ad_id: ad.id, ad_name: newAdName });
+          else results.push({ adset_id: adsetId, adset_name: adsetName, error: 'ad create failed', detail: ad });
+        } catch (e) { results.push({ adset_id: adsetId, error: e.message }); }
+      }
+      return res.json({
+        ok: true, mode: 'add_to_existing', ig_media_id: igMediaId, creative_id: creativeId, results, steps,
+        note: 'New ads created PAUSED inside your existing ad sets. Targeting + budget unchanged. Review and unpause in Meta Ads Manager.'
+      });
+    }
+
+    // ═══ MODE: test — current behaviour, one new ad set per new city ═══
     // 3. Pick or create campaign — skip creation in dry_run (don't litter Meta with empty campaigns)
     let useCampaignId = campaign_id;
     if (!useCampaignId || useCampaignId === 'NEW_TEST') {

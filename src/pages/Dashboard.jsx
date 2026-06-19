@@ -1022,9 +1022,12 @@ function HourTab({ hourRich }) {
 // ═══ SALES & ROI TAB ═══
 function PromoteIgTab() {
   const SUGGESTED_CITIES = ['Cozumel', 'Tuxtla Gutiérrez', 'Colima', 'Puebla', 'Chihuahua', 'Tepic'];
+  const [mode, setMode] = useState('add_to_existing');     // 'add_to_existing' (normal) | 'test' (discovery)
   const [igPost, setIgPost] = useState('');
   const [cities, setCities] = useState(new Set(['Cozumel', 'Tuxtla Gutiérrez', 'Colima']));
   const [newCity, setNewCity] = useState('');
+  const [selectedAdsets, setSelectedAdsets] = useState(new Set());
+  const [adsetList, setAdsetList] = useState([]);
   const [budget, setBudget] = useState(5);
   const [days, setDays] = useState(14);
   const [campaignId, setCampaignId] = useState('NEW_TEST');
@@ -1039,8 +1042,10 @@ function PromoteIgTab() {
 
   useEffect(() => {
     api.getMetaCampaigns().then(setCampaigns).catch(() => setCampaigns([]));
+    api.getLiveAdsets().then(setAdsetList).catch(() => setAdsetList([]));
     api.getSettings().then(s => { setSavedIgUserId(s.ig_user_id || ''); setIgUserId(s.ig_user_id || ''); }).catch(() => {});
   }, []);
+  const toggleAdset = id => setSelectedAdsets(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const saveIgUserId = async () => {
     setSavingIg(true);
@@ -1050,21 +1055,30 @@ function PromoteIgTab() {
   };
 
   const toggleCity = c => setCities(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
-  const addCity = () => { if (newCity.trim()) { setCities(s => new Set([...s, newCity.trim()])); setNewCity(''); } };
+  // Comma-or-newline separated input — pastes whole lists in one go
+  const addCity = () => {
+    const parts = newCity.split(/[,\n]+/).map(p => p.trim()).filter(Boolean);
+    if (parts.length) { setCities(s => new Set([...s, ...parts])); setNewCity(''); }
+  };
 
   const run = async (dry) => {
     setErr(''); setBusy(true); setResult(null); if (dry) setPreview(null);
     try {
-      const r = await api.promoteIgPost({
-        ig_post: igPost.trim(), cities: [...cities],
-        daily_budget_usd: budget, days, campaign_id: campaignId, dry_run: !!dry
-      });
+      const payload = { ig_post: igPost.trim(), dry_run: !!dry, mode };
+      if (mode === 'add_to_existing') {
+        payload.existing_adset_ids = [...selectedAdsets];
+      } else {
+        payload.cities = [...cities];
+        payload.daily_budget_usd = budget; payload.days = days; payload.campaign_id = campaignId;
+      }
+      const r = await api.promoteIgPost(payload);
       if (dry) setPreview(r); else setResult(r);
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
 
   const totalLifetime = budget * days * cities.size;
+  const canSubmit = igPost && (mode === 'add_to_existing' ? selectedAdsets.size > 0 : cities.size > 0);
 
   return (
     <div className="sec">
@@ -1101,54 +1115,95 @@ function PromoteIgTab() {
           style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
       </div>
 
-      {/* Cities */}
+      {/* Mode toggle */}
       <div style={{ marginBottom: '1rem' }}>
-        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>2 · Cities to test ({cities.size} selected)</label>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.4rem' }}>
-          {[...new Set([...SUGGESTED_CITIES, ...cities])].map(c => (
-            <button key={c} onClick={() => toggleCity(c)}
-              style={{ background: cities.has(c) ? 'var(--grn)' : 'var(--as2)', color: cities.has(c) ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.3rem .7rem', borderRadius: 14, fontSize: '.78rem', cursor: 'pointer', fontWeight: cities.has(c) ? 700 : 400 }}>{cities.has(c) ? '✓ ' : '+ '}{c}</button>
-          ))}
-          <input value={newCity} onChange={e => setNewCity(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCity()}
-            placeholder="+ add city"
-            style={{ background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.3rem .6rem', borderRadius: 14, fontSize: '.78rem', width: 110 }} />
+        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>2 · Mode</label>
+        <div style={{ display: 'flex', gap: '.5rem', marginTop: '.4rem' }}>
+          <button onClick={() => setMode('add_to_existing')}
+            style={{ flex: 1, background: mode === 'add_to_existing' ? 'var(--grn)' : 'var(--as2)', color: mode === 'add_to_existing' ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.6rem .8rem', borderRadius: 6, fontSize: '.85rem', cursor: 'pointer', fontWeight: mode === 'add_to_existing' ? 700 : 400, textAlign: 'left' }}>
+            🎯 <b>Promote to existing audience</b> — pick proven ad sets (BEACH, MIXCALCO), add this IG post as a fresh ad. No new ad sets, no budget change.
+          </button>
+          <button onClick={() => setMode('test')}
+            style={{ flex: 1, background: mode === 'test' ? 'var(--blu)' : 'var(--as2)', color: mode === 'test' ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.6rem .8rem', borderRadius: 6, fontSize: '.85rem', cursor: 'pointer', fontWeight: mode === 'test' ? 700 : 400, textAlign: 'left' }}>
+            🧪 <b>Test a new geo</b> — create 1 new PAUSED ad set per city. For discovery (Cozumel, Tuxtla, etc).
+          </button>
         </div>
       </div>
 
-      {/* Budget */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'flex-end' }}>
-        <div style={{ flex: 1 }}>
-          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Daily budget per city (USD)</label>
-          <input type="number" value={budget} onChange={e => setBudget(parseFloat(e.target.value) || 0)} min="1" step="1"
-            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+      {/* Mode A: add_to_existing — multi-select ad sets */}
+      {mode === 'add_to_existing' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Pick the ad set(s) to add this IG post to ({selectedAdsets.size} selected)</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.4rem' }}>
+            {adsetList.length === 0 && <span style={{ color: 'var(--at3)', fontSize: '.78rem' }}>Loading ad sets…</span>}
+            {adsetList.filter(a => a.status === 'ACTIVE').map(a => (
+              <button key={a.id} onClick={() => toggleAdset(a.id)}
+                style={{ background: selectedAdsets.has(a.id) ? 'var(--grn)' : 'var(--as2)', color: selectedAdsets.has(a.id) ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.4rem .7rem', borderRadius: 6, fontSize: '.74rem', cursor: 'pointer', fontWeight: selectedAdsets.has(a.id) ? 700 : 400, textAlign: 'left', maxWidth: 320 }}>
+                {selectedAdsets.has(a.id) ? '✓ ' : '+ '}{a.name}
+              </button>
+            ))}
+          </div>
+          {selectedAdsets.size > 0 && (
+            <p style={{ fontSize: '.72rem', color: 'var(--at2)', marginTop: '.5rem' }}>
+              Will create 1 shared creative + {selectedAdsets.size} new ad(s), one per selected ad set. All PAUSED. Targeting + budget on each ad set is unchanged.
+            </p>
+          )}
         </div>
-        <div style={{ flex: 1 }}>
-          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Duration (days)</label>
-          <input type="number" value={days} onChange={e => setDays(parseInt(e.target.value) || 0)} min="3" step="1"
-            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
-        </div>
-        <div style={{ flex: 2, fontSize: '.85rem', color: 'var(--at)' }}>
-          <div style={{ color: 'var(--at2)', fontSize: '.7rem', textTransform: 'uppercase' }}>Total commitment</div>
-          <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--gold)' }}>${budget * days} × {cities.size} cities = ${totalLifetime}</div>
-        </div>
-      </div>
+      )}
 
-      {/* Campaign */}
-      <div style={{ marginBottom: '1rem' }}>
-        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>4 · Campaign</label>
-        <select value={campaignId} onChange={e => setCampaignId(e.target.value)}
-          style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }}>
-          <option value="NEW_TEST">🆕 Create new TEST campaign (auto-named)</option>
-          {campaigns.map(c => <option key={c.id} value={c.id}>{c.status === 'ACTIVE' ? '🟢 ' : '⏸️ '}{c.name}</option>)}
-        </select>
-      </div>
+      {/* Mode B: test — cities + budget + campaign */}
+      {mode === 'test' && (
+        <>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Cities to test ({cities.size} selected)</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.4rem' }}>
+              {[...new Set([...SUGGESTED_CITIES, ...cities])].map(c => (
+                <button key={c} onClick={() => toggleCity(c)}
+                  style={{ background: cities.has(c) ? 'var(--grn)' : 'var(--as2)', color: cities.has(c) ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.3rem .7rem', borderRadius: 14, fontSize: '.78rem', cursor: 'pointer', fontWeight: cities.has(c) ? 700 : 400 }}>{cities.has(c) ? '✓ ' : '+ '}{c}</button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '.4rem', marginTop: '.5rem' }}>
+              <input value={newCity} onChange={e => setNewCity(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCity()}
+                placeholder="+ add cities — paste comma-separated: e.g. Tepic, Culiacán, Hermosillo"
+                style={{ flex: 1, background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.4rem .7rem', borderRadius: 6, fontSize: '.78rem' }} />
+              <button onClick={addCity} disabled={!newCity.trim()} className="go" style={{ background: 'var(--blu)' }}>Add all</button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>4 · Daily budget per city (USD)</label>
+              <input type="number" value={budget} onChange={e => setBudget(parseFloat(e.target.value) || 0)} min="1" step="1"
+                style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Duration (days)</label>
+              <input type="number" value={days} onChange={e => setDays(parseInt(e.target.value) || 0)} min="3" step="1"
+                style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+            </div>
+            <div style={{ flex: 2, fontSize: '.85rem', color: 'var(--at)' }}>
+              <div style={{ color: 'var(--at2)', fontSize: '.7rem', textTransform: 'uppercase' }}>Total commitment</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--gold)' }}>${budget * days} × {cities.size} cities = ${totalLifetime}</div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>5 · Campaign</label>
+            <select value={campaignId} onChange={e => setCampaignId(e.target.value)}
+              style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }}>
+              <option value="NEW_TEST">🆕 Create new TEST campaign (auto-named)</option>
+              {campaigns.map(c => <option key={c.id} value={c.id}>{c.status === 'ACTIVE' ? '🟢 ' : '⏸️ '}{c.name}</option>)}
+            </select>
+          </div>
+        </>
+      )}
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: '.6rem' }}>
-        <button onClick={() => run(true)} disabled={busy || !igPost || !cities.size} className="go" style={{ background: 'var(--blu)' }}>
+        <button onClick={() => run(true)} disabled={busy || !canSubmit} className="go" style={{ background: 'var(--blu)' }}>
           {busy ? 'Working…' : '🧪 Dry-run preview'}
         </button>
-        <button onClick={() => run(false)} disabled={busy || !igPost || !cities.size} className="go">
+        <button onClick={() => run(false)} disabled={busy || !canSubmit} className="go">
           {busy ? 'Creating…' : '✅ Create PAUSED on Meta'}
         </button>
       </div>
