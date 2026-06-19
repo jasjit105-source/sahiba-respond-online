@@ -1012,13 +1012,22 @@ async function resolveCityKey(name) {
   return data[0] || null;
 }
 
-// Helper: resolve IG URL or shortcode to media ID via Pipeboard
+// Helper: resolve IG URL or shortcode to media ID via Pipeboard.
+// Requires ig_user_id (Sahiba Instagram Business Account ID) which must be in settings
+// because the ad account does not have an auto-linked IG account in Business Manager.
 async function resolveIgMedia(input) {
-  // accept full URL, shortcode (Cabc123), or already-resolved numeric ID
   const trimmed = String(input || '').trim();
-  if (/^\d{6,}$/.test(trimmed)) return { media_id: trimmed, raw: trimmed };
-  const r = extractText(await mcpCall('resolve_instagram_media', { url_or_shortcode: trimmed }));
-  return r || null;
+  // Already a numeric ID? Use as-is.
+  if (/^\d{10,}$/.test(trimmed)) return { media_id: trimmed, source: 'numeric_input' };
+  // Extract shortcode from any /p/, /reel/, /tv/ URL (strips query params, trailing slashes)
+  const m = trimmed.match(/instagram\.com\/(?:p|reel|tv|reels)\/([A-Za-z0-9_-]+)/);
+  const shortcode = m ? m[1] : (/^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : null);
+  if (!shortcode) throw new Error('Could not parse IG post — paste a full URL like https://www.instagram.com/reel/Cabc123/ or just the shortcode (Cabc123) or the numeric media ID.');
+  const igUserId = setting('ig_user_id');
+  if (!igUserId) throw new Error('SETUP NEEDED: Instagram Business Account ID is not set. Go to business.facebook.com → Settings → Instagram accounts, copy the numeric ID of the Sahiba IG account, and save it in CRM settings as "ig_user_id".');
+  const r = extractText(await mcpCall('resolve_instagram_media', { ig_user_id: igUserId, shortcode }));
+  if (!r || r.error) throw new Error('Pipeboard could not resolve shortcode "' + shortcode + '" — ' + (r?.error || 'unknown error') + '. Verify the post is on the Sahiba IG account and that ig_user_id in settings is correct.');
+  return { media_id: String(r.media_id || r.id || r.instagram_media_id || ''), source: 'resolved', raw: r };
 }
 
 app.post('/api/promote-ig-post', async (req, res) => {
@@ -1036,7 +1045,7 @@ app.post('/api/promote-ig-post', async (req, res) => {
   try {
     // 1. Resolve IG post → media ID
     const resolved = await resolveIgMedia(ig_post);
-    const igMediaId = resolved?.media_id || resolved?.id || resolved?.instagram_media_id;
+    const igMediaId = String(resolved?.media_id || resolved?.id || resolved?.instagram_media_id || '');
     if (!igMediaId) return res.status(400).json({ error: 'Could not resolve IG post — paste full URL or numeric media ID', detail: resolved, steps });
     steps.push(`Resolved IG post → media_id ${igMediaId}`);
 

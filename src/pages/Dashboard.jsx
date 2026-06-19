@@ -1033,8 +1033,21 @@ function PromoteIgTab() {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [igUserId, setIgUserId] = useState('');
+  const [savedIgUserId, setSavedIgUserId] = useState('');
+  const [savingIg, setSavingIg] = useState(false);
 
-  useEffect(() => { api.getMetaCampaigns().then(setCampaigns).catch(() => setCampaigns([])); }, []);
+  useEffect(() => {
+    api.getMetaCampaigns().then(setCampaigns).catch(() => setCampaigns([]));
+    api.getSettings().then(s => { setSavedIgUserId(s.ig_user_id || ''); setIgUserId(s.ig_user_id || ''); }).catch(() => {});
+  }, []);
+
+  const saveIgUserId = async () => {
+    setSavingIg(true);
+    try { await api.saveSettings({ ig_user_id: igUserId.trim() }); setSavedIgUserId(igUserId.trim()); setErr(''); }
+    catch (e) { setErr(e.message); }
+    setSavingIg(false);
+  };
 
   const toggleCity = c => setCities(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
   const addCity = () => { if (newCity.trim()) { setCities(s => new Set([...s, newCity.trim()])); setNewCity(''); } };
@@ -1060,6 +1073,25 @@ function PromoteIgTab() {
         Your workflow: post on Instagram first, then promote that exact post on Facebook. Paste the IG post URL or shortcode, pick cities, the wizard creates one PAUSED ad set per city.
         <b style={{ color: 'var(--gold)' }}> Nothing goes live</b> — every ad set is created PAUSED for your review in Meta Ads Manager.
       </p>
+
+      {/* One-time setup: IG Business Account ID */}
+      <div className="snap-info" style={{ marginBottom: '1rem', borderLeftColor: savedIgUserId ? 'var(--grn)' : 'var(--gold)' }}>
+        <b style={{ color: savedIgUserId ? 'var(--grn)' : 'var(--gold)' }}>
+          {savedIgUserId ? '✅ IG Business Account ID configured' : '⚠️ One-time setup required: Instagram Business Account ID'}
+        </b>
+        <p style={{ margin: '.4rem 0', fontSize: '.78rem' }}>
+          {savedIgUserId
+            ? `Currently saved: ${savedIgUserId}. Change below if needed.`
+            : 'Pipeboard needs your IG Business Account ID to resolve IG post URLs. Find it at business.facebook.com → Settings → Instagram accounts → click the Sahiba account → copy the numeric ID (looks like 17841400000000000).'}
+        </p>
+        <div style={{ display: 'flex', gap: '.5rem' }}>
+          <input value={igUserId} onChange={e => setIgUserId(e.target.value)} placeholder="17841400000000000"
+            style={{ flex: 1, background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.45rem .6rem', borderRadius: 5, fontSize: '.82rem', fontFamily: 'monospace' }} />
+          <button onClick={saveIgUserId} disabled={savingIg || !igUserId.trim() || igUserId.trim() === savedIgUserId} className="go" style={{ background: 'var(--grn)' }}>
+            {savingIg ? 'Saving...' : (igUserId.trim() === savedIgUserId ? '✓ Saved' : 'Save')}
+          </button>
+        </div>
+      </div>
 
       {/* IG post input */}
       <div style={{ marginBottom: '1rem' }}>
