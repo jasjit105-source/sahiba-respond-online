@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import initSqlJs from 'sql.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs';
 import { dirname, join, extname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -231,9 +231,19 @@ async function syncFromPipeboard() {
     console.log(`  Synced ${ads.length} ads`);
   } catch (e) { console.error('  Ads sync error:', e.message); }
 
-  // 4. Insights (all available — Pipeboard returns lifetime data)
+  // 4. Insights — pull last 120 days with DAILY breakdown so dashboard has real
+  //    per-day rows. Without time_range + time_breakdown Pipeboard returns a
+  //    single lifetime summary per ad stamped with one date (the bug that left
+  //    the table frozen at 2025-06-12).
   try {
-    const insResult = extractText(await mcpCall('get_insights', { account_id: AD_ACCOUNT_ID }));
+    const until = new Date().toISOString().slice(0, 10);
+    const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+    const insResult = extractText(await mcpCall('get_insights', {
+      object_id: AD_ACCOUNT_ID,
+      level: 'ad',
+      time_range: { since, until },
+      time_breakdown: 'day'
+    }));
     const insights = insResult?.data || (Array.isArray(insResult) ? insResult : []);
     let insightCount = 0;
     const seenCampaigns = new Set();
@@ -1318,6 +1328,149 @@ app.get('/api/sql-roi', async (req, res) => {
         ticketCount: Object.keys(tickets).length, lineCount: lines.length
       },
       campaigns, agents
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── Phase 3: GEO ROI — state-by-state revenue per ad lead ───
+// Mexican LADAs (area codes) decode the state a phone was originally registered in.
+// Combined with POS phone match this gives revenue-per-lead per state, the basis
+// for the SCALE/KEEP/CUT geo budget allocation.
+const LADA_TWO = { '33': 'Jalisco', '55': 'CDMX', '81': 'Nuevo León' };
+const LADA_THREE = {
+  '222':'Puebla','223':'Puebla','224':'Puebla','225':'Puebla','227':'Tlaxcala','228':'Veracruz','229':'Veracruz','231':'Puebla','232':'Puebla','233':'Puebla','236':'Puebla','237':'Hidalgo','238':'Puebla',
+  '241':'Tlaxcala','243':'Puebla','244':'Puebla','245':'Hidalgo','246':'Tlaxcala','247':'Puebla','248':'Puebla','249':'Puebla',
+  '271':'Veracruz','272':'Veracruz','273':'Veracruz','274':'Veracruz','275':'Veracruz','278':'Veracruz','281':'Veracruz','282':'Veracruz','283':'Veracruz','284':'Veracruz','285':'Veracruz','287':'Oaxaca','288':'Veracruz','294':'Veracruz','296':'Veracruz','297':'Veracruz',
+  '311':'Nayarit','312':'Colima','313':'Colima','314':'Colima','315':'Jalisco','316':'Jalisco','317':'Jalisco','318':'Jalisco','319':'Jalisco',
+  '321':'Jalisco','322':'Jalisco','323':'Nayarit','324':'Nayarit','325':'Nayarit','326':'Nayarit','327':'Nayarit','328':'Nayarit','329':'Nayarit',
+  '341':'Michoacán','342':'Michoacán','343':'Jalisco','344':'Jalisco','345':'Jalisco','346':'Jalisco','347':'Jalisco','348':'Jalisco','349':'Jalisco',
+  '351':'Michoacán','352':'Michoacán','353':'Michoacán','354':'Michoacán','355':'Michoacán','356':'Michoacán','357':'Michoacán','358':'Michoacán','359':'Michoacán',
+  '372':'Jalisco','373':'Jalisco','374':'Jalisco','375':'Jalisco','376':'Jalisco','377':'Jalisco','378':'Jalisco','381':'Jalisco','382':'Jalisco','383':'Jalisco','384':'Jalisco','385':'Jalisco','386':'Jalisco','387':'Jalisco','388':'Jalisco','389':'Jalisco','391':'Jalisco','392':'Jalisco','393':'Jalisco','395':'Jalisco','396':'Jalisco',
+  '412':'Guanajuato','413':'Guanajuato','414':'Guanajuato','415':'Guanajuato','417':'Guanajuato','418':'Guanajuato','419':'Guanajuato',
+  '421':'Querétaro','422':'Querétaro','423':'Querétaro','424':'Guanajuato','425':'Querétaro','426':'Guanajuato','427':'Querétaro','428':'Querétaro','429':'Querétaro','431':'Guanajuato','432':'Guanajuato','433':'Guanajuato','434':'Guanajuato','435':'Guanajuato','436':'Guanajuato','437':'Guanajuato','438':'Guanajuato',
+  '441':'Querétaro','442':'Querétaro','443':'Michoacán','444':'San Luis Potosí','445':'Querétaro','447':'San Luis Potosí','449':'Aguascalientes','451':'Michoacán','452':'Michoacán','453':'Michoacán','454':'Michoacán','455':'Michoacán','456':'Michoacán','457':'Michoacán','458':'Michoacán','459':'Michoacán',
+  '461':'Guanajuato','462':'Guanajuato','464':'Guanajuato','465':'Guanajuato','466':'Guanajuato','467':'Guanajuato','468':'Guanajuato','469':'Guanajuato',
+  '471':'Guanajuato','472':'Guanajuato','473':'Guanajuato','474':'Guanajuato','475':'Jalisco','476':'Guanajuato','477':'Guanajuato','478':'Guanajuato',
+  '481':'San Luis Potosí','482':'San Luis Potosí','483':'San Luis Potosí','485':'San Luis Potosí','486':'San Luis Potosí','487':'San Luis Potosí','488':'Jalisco','489':'San Luis Potosí','492':'Zacatecas','493':'Zacatecas','494':'Zacatecas','496':'Zacatecas','498':'Zacatecas','499':'Zacatecas',
+  '612':'Baja California Sur','613':'Baja California Sur','614':'Chihuahua','615':'Baja California Sur','616':'Baja California','618':'Durango','621':'Chihuahua','622':'Sonora','623':'Sonora','624':'Baja California Sur','625':'Chihuahua','626':'Chihuahua','627':'Chihuahua','628':'Chihuahua','629':'Chihuahua','631':'Sonora','632':'Sonora','633':'Sonora','634':'Sonora','635':'Chihuahua','636':'Chihuahua','637':'Sonora','638':'Sonora','639':'Chihuahua',
+  '641':'Sonora','642':'Sonora','643':'Sonora','644':'Sonora','645':'Sonora','646':'Baja California','647':'Sonora','648':'Sonora','649':'Baja California',
+  '651':'Sonora','652':'Sonora','653':'Sonora','656':'Chihuahua','658':'Sonora','659':'Chihuahua','661':'Baja California','662':'Sonora','664':'Baja California','665':'Baja California','667':'Sinaloa','668':'Sinaloa','669':'Sinaloa','671':'Sinaloa','672':'Sinaloa','673':'Sinaloa','674':'Sinaloa','675':'Sinaloa','677':'Sinaloa','686':'Baja California','687':'Sinaloa','688':'Sinaloa','689':'Sinaloa','691':'Sinaloa','692':'Sinaloa','693':'Sinaloa','694':'Sinaloa','695':'Sinaloa','696':'Sinaloa','697':'Sinaloa','698':'Sinaloa',
+  '711':'Edo. México','712':'Edo. México','713':'Edo. México','714':'Edo. México','715':'Edo. México','716':'Edo. México','717':'Edo. México','718':'Edo. México','719':'Edo. México','721':'Edo. México','722':'Edo. México','723':'Edo. México','724':'Edo. México','725':'Edo. México','726':'Edo. México','727':'Edo. México','728':'Edo. México','729':'Edo. México',
+  '731':'Edo. México','732':'Edo. México','733':'Edo. México','734':'Edo. México','735':'Morelos','736':'Morelos','737':'Morelos','738':'Morelos','739':'Morelos',
+  '741':'Guerrero','742':'Guerrero','743':'Guerrero','744':'Guerrero','745':'Guerrero','746':'Guerrero','747':'Guerrero','748':'Guerrero','749':'Guerrero','751':'Guerrero','753':'Michoacán','754':'Guerrero','755':'Guerrero','756':'Guerrero','757':'Guerrero','758':'Guerrero','759':'Guerrero',
+  '761':'Morelos','762':'Morelos','763':'Morelos','764':'Morelos','765':'Morelos','766':'Morelos','767':'Morelos','768':'Morelos','769':'Morelos','777':'Morelos',
+  '771':'Hidalgo','772':'Hidalgo','773':'Hidalgo','774':'Hidalgo','775':'Hidalgo','776':'Hidalgo','778':'Hidalgo','779':'Hidalgo','781':'Hidalgo','782':'Veracruz','783':'Veracruz','784':'Veracruz','785':'Veracruz','787':'Veracruz','789':'Veracruz',
+  '791':'Hidalgo','792':'Hidalgo','793':'Hidalgo','794':'Hidalgo','795':'Hidalgo','796':'Hidalgo','797':'Hidalgo','798':'Hidalgo','799':'Hidalgo',
+  '811':'Nuevo León','812':'Nuevo León','813':'Nuevo León','814':'Nuevo León','815':'Nuevo León','816':'Nuevo León','817':'Nuevo León','818':'Nuevo León','819':'Nuevo León','821':'Nuevo León','823':'Nuevo León','824':'Nuevo León','825':'Nuevo León','826':'Nuevo León','827':'Nuevo León','828':'Tamaulipas','829':'Nuevo León','831':'Tamaulipas','832':'Veracruz','833':'Tamaulipas','834':'Tamaulipas','835':'Tamaulipas','836':'Tamaulipas','837':'Tamaulipas','838':'Tamaulipas','841':'Nuevo León','842':'Coahuila','843':'Coahuila','844':'Coahuila','845':'Coahuila','846':'Coahuila','847':'Coahuila','861':'Coahuila','862':'Coahuila','864':'Coahuila','866':'Coahuila','867':'Tamaulipas','868':'Tamaulipas','869':'Tamaulipas','871':'Coahuila','872':'Coahuila','873':'Coahuila','877':'Coahuila','878':'Coahuila',
+  '891':'Tamaulipas','892':'Tamaulipas','894':'Tamaulipas','895':'Tamaulipas','897':'Tamaulipas','898':'Tamaulipas','899':'Tamaulipas',
+  '921':'Veracruz','922':'Veracruz','923':'Veracruz','924':'Veracruz','932':'Tabasco','933':'Tabasco','934':'Tabasco','936':'Tabasco','937':'Tabasco','938':'Campeche',
+  '951':'Oaxaca','953':'Oaxaca','954':'Oaxaca','958':'Oaxaca','971':'Oaxaca','972':'Oaxaca',
+  '961':'Chiapas','962':'Chiapas','963':'Chiapas','964':'Chiapas','965':'Chiapas','966':'Chiapas','967':'Chiapas','968':'Chiapas',
+  '981':'Campeche','982':'Campeche','983':'Quintana Roo','984':'Quintana Roo','985':'Yucatán','986':'Yucatán','987':'Quintana Roo','988':'Yucatán','991':'Yucatán','992':'Yucatán','993':'Tabasco','994':'Tabasco','995':'Tabasco','996':'Tabasco','997':'Campeche','998':'Quintana Roo','999':'Yucatán'
+};
+function phoneToState(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  if (!d.startsWith('52')) return null;          // not Mexican
+  let s = d.slice(2);
+  if (s[0] === '1' && s.length === 11) s = s.slice(1);  // strip mobile prefix
+  if (s.length < 10) return null;
+  return LADA_TWO[s.slice(0, 2)] || LADA_THREE[s.slice(0, 3)] || null;
+}
+
+// Cache the phone→state map between calls (CSV rarely changes, parsing 132k rows is slow)
+let _geoCache = { mtime: 0, phone2state: null, leadsByState: null };
+function loadContactsMap() {
+  const path = setting('contacts_csv_path');
+  if (!path || !existsSync(path)) throw new Error('contacts_csv_path not set or file missing — re-export respond.io CSV and update setting');
+  const { mtimeMs } = statSync(path);
+  if (_geoCache.mtime === mtimeMs && _geoCache.phone2state) return _geoCache;
+  const rows = parseCSV(readFileSync(path, 'utf-8'));
+  if (rows.length < 2) throw new Error('contacts CSV is empty');
+  const header = rows[0].map(h => h.toLowerCase().trim());
+  const phoneIdx = header.findIndex(h => h.includes('phone'));
+  if (phoneIdx < 0) throw new Error('PhoneNumber column not found in contacts CSV');
+  const phone2state = {}, leadsByState = {};
+  for (let i = 1; i < rows.length; i++) {
+    const p = rows[i][phoneIdx]; if (!p) continue;
+    const st = phoneToState(p); if (!st) continue;
+    const np = normPhone(p); if (!np) continue;
+    if (!phone2state[np]) {                       // first occurrence wins
+      phone2state[np] = st;
+      leadsByState[st] = (leadsByState[st] || 0) + 1;
+    }
+  }
+  _geoCache = { mtime: mtimeMs, phone2state, leadsByState };
+  return _geoCache;
+}
+
+app.get('/api/geo-roi', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 90;
+    const rate = parseFloat(setting('mxn_rate', '18')) || 18;
+    const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+    const { phone2state, leadsByState } = loadContactsMap();
+
+    // Pull POS lines (only those with a phone — required for the state join)
+    const lines = [];
+    for (const tbl of ['MOVS_CIRCUNVALACION', 'MOVS_LEONA']) {
+      const rows = await sqlQuery(
+        `SELECT NO_REFEREN, CustPhone, Cantidad, Precio_Venta, Fecha FROM ${tbl}
+         WHERE Movimiento='TK' AND Fecha >= '${since}' AND CustPhone IS NOT NULL`
+      );
+      for (const r of rows) lines.push({ ...r, store: tbl });
+    }
+
+    // Aggregate by state (one revenue figure per ticket — sum lines first, then map state once)
+    const ticketAgg = {};   // store|NO_REFEREN -> { phone, mxn, state }
+    let totalLines = 0, matchedLines = 0;
+    for (const ln of lines) {
+      totalLines++;
+      const ph = normPhone(ln.CustPhone); if (!ph) continue;
+      const st = phone2state[ph]; if (!st) continue;
+      matchedLines++;
+      const tkey = ln.store + '|' + ln.NO_REFEREN;
+      const amt = (parseFloat(ln.Cantidad) || 0) * (parseFloat(ln.Precio_Venta) || 0);
+      if (!ticketAgg[tkey]) ticketAgg[tkey] = { phone: ph, state: st, mxn: 0 };
+      ticketAgg[tkey].mxn += amt;
+    }
+
+    const stateAgg = {};    // state -> { tickets, mxn, phones:Set }
+    for (const t of Object.values(ticketAgg)) {
+      const s = stateAgg[t.state] || (stateAgg[t.state] = { tickets: 0, mxn: 0, phones: new Set() });
+      s.tickets++; s.mxn += t.mxn; s.phones.add(t.phone);
+    }
+
+    // Build the table, tier each state
+    // Tiers (USD per lead, 90-day): SCALE ≥ $3 · KEEP $1–3 · CUT < $1 · TEST < 50 leads
+    const states = [];
+    const seen = new Set([...Object.keys(stateAgg), ...Object.keys(leadsByState)]);
+    for (const st of seen) {
+      const leads = leadsByState[st] || 0;
+      const s = stateAgg[st] || { tickets: 0, mxn: 0, phones: new Set() };
+      const tickets = s.tickets, revMXN = s.mxn, revUSD = revMXN / rate;
+      const customers = s.phones.size;
+      const avgTicketMXN = tickets ? revMXN / tickets : 0;
+      const convPct = leads ? 100 * customers / leads : 0;
+      const usdPerLead = leads ? revUSD / leads : 0;
+      let tier;
+      if (leads < 50) tier = 'TEST';
+      else if (st === 'CDMX') tier = 'REVIEW';                           // walk-in undercount, treat separately
+      else if (usdPerLead >= 3) tier = 'SCALE';
+      else if (usdPerLead >= 1) tier = 'KEEP';
+      else tier = 'CUT';
+      states.push({ state: st, leads, tickets, customers, revMXN, revUSD, avgTicketMXN, avgTicketUSD: avgTicketMXN / rate, convPct, usdPerLead, tier });
+    }
+    states.sort((a, b) => b.usdPerLead - a.usdPerLead);
+
+    res.json({
+      ok: true, days, since, rate,
+      lineStats: { totalLines, matchedLines, matchPct: totalLines ? 100 * matchedLines / totalLines : 0 },
+      contactStats: { withState: Object.keys(phone2state).length },
+      caveat: 'CDMX is flagged REVIEW: both stores are in CDMX, so most CDMX customers walk in without leaving a phone on the POS ticket → phone-match misses them. CDMX usdPerLead is undercounted; evaluate via foot traffic instead.',
+      states
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

@@ -20,6 +20,7 @@ export const api = {
   duplicateWithSchedule: (data) => request('POST', '/duplicate-with-schedule', data),
   getSalesROI: () => request('GET', '/sales-roi'),
   getSqlROI: (days) => request('GET', `/sql-roi?days=${days || 90}`),
+  getGeoROI: (days) => request('GET', `/geo-roi?days=${days || 90}`),
   getSettings: () => request('GET', '/settings'),
   saveSettings: (data) => request('POST', '/settings', data),
 

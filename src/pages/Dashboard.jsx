@@ -1020,6 +1020,104 @@ function HourTab({ hourRich }) {
 }
 
 // ═══ SALES & ROI TAB ═══
+function GeoROITab() {
+  const [data, setData] = useState(null);
+  const [days, setDays] = useState(90);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((d) => {
+    setLoading(true);
+    api.getGeoROI(d).then(setData).catch(e => setData({ ok: false, error: e.message })).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(days); }, [load, days]);
+
+  if (loading) return <div className="ld"><div className="sp"></div><p>Loading geo ROI…</p></div>;
+  if (!data || !data.ok) return <div className="sec"><h2 className="sh">Geo ROI</h2><div className="err">Error: {data?.error || 'no data'}</div></div>;
+
+  const r = data.rate;
+  const $u = (v, dec = 0) => '$' + (v || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  const mx = v => '$' + Math.round(v || 0).toLocaleString('en-US') + ' MXN';
+  const fmt = n => (n || 0).toLocaleString('en-US');
+
+  const tierColor = { SCALE: 'var(--grn)', KEEP: 'var(--blu)', CUT: 'var(--red)', TEST: 'var(--at3)', REVIEW: 'var(--gold)' };
+  const states = data.states.filter(s => s.leads >= 10);
+  const scale = states.filter(s => s.tier === 'SCALE');
+  const keep  = states.filter(s => s.tier === 'KEEP');
+  const cut   = states.filter(s => s.tier === 'CUT');
+  const totalScaleUSD = scale.reduce((a, b) => a + b.revUSD, 0);
+  const totalKeepUSD  = keep.reduce((a, b) => a + b.revUSD, 0);
+  const totalCutUSD   = cut.reduce((a, b) => a + b.revUSD, 0);
+  const totalCutLeads = cut.reduce((a, b) => a + b.leads, 0);
+
+  return (
+    <>
+      <div className="sec">
+        <h2 className="sh">Geo ROI — Revenue by Mexican State</h2>
+        <p style={{ fontSize: '.8rem', color: 'var(--at2)', marginBottom: '.75rem' }}>
+          State is decoded from each contact's phone LADA (area code); revenue comes from SQL Server POS, joined on last 10 digits of phone.
+          Window: last {data.days} days (since {data.since}). Rate: 1 USD = {r} MXN.
+        </p>
+        <div style={{ display: 'flex', gap: '.5rem', alignItems: 'center', marginBottom: '1rem' }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)' }}>Window:</label>
+          {[30, 60, 90, 120].map(d => (
+            <button key={d} className={`tab ${days === d ? 'active' : ''}`} onClick={() => setDays(d)} style={{ padding: '.3rem .75rem', fontSize: '.75rem' }}>{d}d</button>
+          ))}
+          <span style={{ marginLeft: 'auto', fontSize: '.72rem', color: 'var(--at3)' }}>
+            {fmt(data.contactStats.withState)} contacts mapped to state · {data.lineStats.matchedLines}/{data.lineStats.totalLines} POS lines matched ({data.lineStats.matchPct.toFixed(1)}%)
+          </span>
+        </div>
+
+        <div className="snap-info" style={{ marginBottom: '1rem', borderLeftColor: 'var(--gold)' }}>
+          <b style={{ color: 'var(--gold)' }}>⚠️ CDMX caveat — read before acting</b>
+          <p style={{ margin: '.4rem 0 0', fontSize: '.78rem' }}>{data.caveat}</p>
+        </div>
+
+        <div className="kr">
+          <div className="k"><div className="l">🟢 SCALE states</div><div className="v" style={{ color: 'var(--grn)' }}>{scale.length}</div><div className="s">{$u(totalScaleUSD)} · {mx(totalScaleUSD * r)}</div></div>
+          <div className="k"><div className="l">🔵 KEEP states</div><div className="v" style={{ color: 'var(--blu)' }}>{keep.length}</div><div className="s">{$u(totalKeepUSD)} · {mx(totalKeepUSD * r)}</div></div>
+          <div className="k"><div className="l">🔴 CUT states</div><div className="v" style={{ color: 'var(--red)' }}>{cut.length}</div><div className="s">{$u(totalCutUSD)} from {fmt(totalCutLeads)} leads — pause</div></div>
+          <div className="k"><div className="l">Total ad-driven (online)</div><div className="v" style={{ color: 'var(--gold)' }}>{$u(totalScaleUSD + totalKeepUSD + totalCutUSD)}</div><div className="s">{mx((totalScaleUSD + totalKeepUSD + totalCutUSD) * r)} · ex-CDMX walk-in</div></div>
+        </div>
+      </div>
+
+      <div className="sec">
+        <h2 className="sh">Per-State Ranking — sorted by USD revenue per lead</h2>
+        <div className="tw">
+          <table>
+            <thead><tr>
+              <th>Tier</th><th>State</th>
+              <th className="r">Leads</th><th className="r">Tickets</th>
+              <th className="r">Revenue (MXN)</th><th className="r">Revenue (USD)</th>
+              <th className="r">Avg Ticket (MXN)</th><th className="r">Avg Ticket (USD)</th>
+              <th className="r">Conv %</th><th className="r">USD / Lead</th>
+            </tr></thead>
+            <tbody>
+              {states.map(s => (
+                <tr key={s.state}>
+                  <td><span style={{ background: tierColor[s.tier], color: '#000', padding: '2px 8px', borderRadius: 4, fontSize: '.7rem', fontWeight: 700 }}>{s.tier}</span></td>
+                  <td style={{ fontWeight: 600 }}>{s.state}</td>
+                  <td className="r">{fmt(s.leads)}</td>
+                  <td className="r">{fmt(s.tickets)}</td>
+                  <td className="r">{Math.round(s.revMXN).toLocaleString('en-US')}</td>
+                  <td className="r best">{$u(s.revUSD)}</td>
+                  <td className="r">{Math.round(s.avgTicketMXN).toLocaleString('en-US')}</td>
+                  <td className="r">{$u(s.avgTicketUSD)}</td>
+                  <td className="r">{s.convPct.toFixed(2)}%</td>
+                  <td className={`r ${s.tier === 'SCALE' ? 'best' : s.tier === 'CUT' ? 'worst' : ''}`} style={{ fontWeight: 700 }}>{$u(s.usdPerLead, 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.75rem' }}>
+          Tiers (last 90d): SCALE ≥ $3 USD/lead · KEEP $1–3 · CUT &lt; $1 · TEST &lt; 50 leads · REVIEW = CDMX walk-in undercount.
+          Tickets count once per receipt; multi-line tickets aggregate to a single revenue figure.
+        </p>
+      </div>
+    </>
+  );
+}
+
 function SalesROITab() {
   const [data, setData] = useState(null);
   const [sql, setSql] = useState(null);
@@ -1496,7 +1594,7 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
@@ -1505,6 +1603,7 @@ export default function Dashboard() {
           {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
           {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
           {tab === 'salesroi' && <SalesROITab />}
+          {tab === 'georoi' && <GeoROITab />}
           {tab === 'schedule' && <ScheduleTab hourRich={data.hourRich} />}
           {tab === 'depth' && <DepthTab ads={ads} />}
           {tab === 'recs' && <RecsTab ads={ads} camps={camps} tSpend={tSpend} nDays={nDays} />}
