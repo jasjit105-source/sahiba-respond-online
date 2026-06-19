@@ -955,6 +955,130 @@ app.post('/api/repair-schedule', async (req, res) => {
   }
 });
 
+// ─── PROMOTE IG POST WIZARD ───
+// Workflow: user pastes IG post URL → wizard creates one PAUSED ad set per city,
+// each with creative pointing to the existing IG post. Follows the [TEST]-City-IGpost-Date
+// naming convention and uses the user-confirmed conservative budget ($5/day × 14 days
+// default). User reviews on Meta and unpauses when ready. NO auto-changes.
+
+// Helper: list campaigns (for the wizard dropdown). Returns campaigns from Meta directly so
+// we always have fresh names.
+app.get('/api/meta-campaigns', async (req, res) => {
+  try {
+    const r = extractText(await mcpCall('get_campaigns', { account_id: AD_ACCOUNT_ID }));
+    const data = r?.data || (Array.isArray(r) ? r : []);
+    res.json(data.filter(c => c.status !== 'DELETED').map(c => ({ id: c.id, name: c.name, status: c.status, objective: c.objective })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Helper: resolve a Meta city by name → { key, name, region } (uses first match)
+async function resolveCityKey(name) {
+  const r = extractText(await mcpCall('search_geo_locations', { query: name, location_types: ['city'], country_code: 'MX' }));
+  const data = r?.data || [];
+  return data[0] || null;
+}
+
+// Helper: resolve IG URL or shortcode to media ID via Pipeboard
+async function resolveIgMedia(input) {
+  // accept full URL, shortcode (Cabc123), or already-resolved numeric ID
+  const trimmed = String(input || '').trim();
+  if (/^\d{6,}$/.test(trimmed)) return { media_id: trimmed, raw: trimmed };
+  const r = extractText(await mcpCall('resolve_instagram_media', { url_or_shortcode: trimmed }));
+  return r || null;
+}
+
+app.post('/api/promote-ig-post', async (req, res) => {
+  const { ig_post, cities, daily_budget_usd, days, campaign_id, product_hint, dry_run } = req.body;
+  if (!ig_post) return res.status(400).json({ error: 'ig_post (URL or ID) required' });
+  if (!cities || !cities.length) return res.status(400).json({ error: 'at least one city required' });
+  const dailyBudget = parseFloat(daily_budget_usd || 5);
+  const window = parseInt(days || 14);
+  const lifetimeUSD = Math.round(dailyBudget * window * 100) / 100;       // $70 default
+  const endTime = new Date(Date.now() + window * 86400000).toISOString().replace(/\.\d+Z$/, '-0600');
+  const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, '').slice(2, 8);  // YYMMDD
+  const pageId = setting('page_id') || '514164875351531';
+  const steps = [];
+
+  try {
+    // 1. Resolve IG post → media ID
+    const resolved = await resolveIgMedia(ig_post);
+    const igMediaId = resolved?.media_id || resolved?.id || resolved?.instagram_media_id;
+    if (!igMediaId) return res.status(400).json({ error: 'Could not resolve IG post — paste full URL or numeric media ID', detail: resolved, steps });
+    steps.push(`Resolved IG post → media_id ${igMediaId}`);
+
+    // 2. Check boost eligibility
+    let eligibility = null;
+    try {
+      const elig = extractText(await mcpCall('check_post_boost_eligibility', { post_ids: [igMediaId] }));
+      eligibility = elig?.data?.[0] || elig;
+      if (eligibility?.eligible === false) return res.status(400).json({ error: 'Post is not boost-eligible on Meta', detail: eligibility, steps });
+      steps.push('Post is boost-eligible');
+    } catch (e) { steps.push(`Eligibility check skipped: ${e.message}`); }
+
+    // 3. Pick or create campaign — skip creation in dry_run (don't litter Meta with empty campaigns)
+    let useCampaignId = campaign_id;
+    if (!useCampaignId || useCampaignId === 'NEW_TEST') {
+      if (dry_run) {
+        useCampaignId = 'NEW_TEST (would create on real run)';
+        steps.push('DRY-RUN: would create TEST campaign');
+      } else {
+        const camp = extractText(await mcpCall('create_campaign', {
+          account_id: AD_ACCOUNT_ID,
+          name: `TEST-NewCities-${dateTag}`,
+          objective: 'OUTCOME_ENGAGEMENT',
+          status: 'PAUSED',
+          special_ad_categories: []
+        }));
+        useCampaignId = camp?.id || camp?.campaign_id;
+        if (!useCampaignId) return res.status(500).json({ error: 'Could not create test campaign', detail: camp, steps });
+        steps.push(`Created TEST campaign ${useCampaignId}`);
+      }
+    }
+
+    // 4. For each city: resolve its key, create ad set + creative + ad (all PAUSED)
+    const results = [];
+    for (const cityName of cities) {
+      const city = await resolveCityKey(cityName);
+      if (!city) { results.push({ city: cityName, error: 'city not found on Meta' }); continue; }
+      const adsetName = `TEST-${cityName.replace(/[^A-Za-z]/g, '')}-IG${igMediaId.slice(-6)}-${dateTag}`;
+      if (dry_run) { results.push({ city: cityName, dry_run: true, would_create: adsetName, city_key: city.key, region: city.region }); continue; }
+
+      // 4a. Create ad set PAUSED with lifetime budget + city geo
+      const adset = extractText(await mcpCall('create_adset', {
+        account_id: AD_ACCOUNT_ID, campaign_id: useCampaignId, name: adsetName, status: 'PAUSED',
+        lifetime_budget: Math.round(lifetimeUSD * 100), end_time: endTime,
+        billing_event: 'IMPRESSIONS', optimization_goal: 'CONVERSATIONS',
+        targeting: { geo_locations: { cities: [{ key: city.key, radius: 17, distance_unit: 'mile', name: city.name, country: 'MX' }], location_types: ['home', 'recent'] } },
+        bid_strategy: 'LOWEST_COST_WITHOUT_CAP'
+      }));
+      const adsetId = adset?.id || adset?.adset_id;
+      if (!adsetId) { results.push({ city: cityName, error: 'adset create failed', detail: adset }); continue; }
+
+      // 4b. Create creative from existing IG post
+      const creative = extractText(await mcpCall('create_existing_post_ad_creative', {
+        account_id: AD_ACCOUNT_ID, page_id: pageId, source_instagram_media_id: igMediaId,
+        name: `${adsetName}-creative`, call_to_action_type: 'MESSAGE_PAGE'
+      }));
+      const creativeId = creative?.id || creative?.creative_id;
+      if (!creativeId) { results.push({ city: cityName, adset_id: adsetId, error: 'creative create failed', detail: creative }); continue; }
+
+      // 4c. Create ad PAUSED
+      const ad = extractText(await mcpCall('create_ad', {
+        account_id: AD_ACCOUNT_ID, adset_id: adsetId, name: adsetName, status: 'PAUSED', creative_id: creativeId
+      }));
+      results.push({ city: cityName, city_key: city.key, region: city.region, adset_id: adsetId, ad_id: ad?.id || null, creative_id: creativeId, name: adsetName });
+    }
+
+    res.json({
+      ok: true, campaign_id: useCampaignId, ig_media_id: igMediaId,
+      lifetime_budget_usd_each: lifetimeUSD, end_time: endTime, results, steps,
+      note: 'All ad sets are PAUSED. Review in Meta Ads Manager and unpause when ready.'
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, steps });
+  }
+});
+
 // --- Ads ---
 app.get('/api/ads', (req, res) => {
   const { campaign_id, adset_id } = req.query;

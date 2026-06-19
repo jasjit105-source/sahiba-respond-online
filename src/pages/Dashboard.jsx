@@ -1020,6 +1020,145 @@ function HourTab({ hourRich }) {
 }
 
 // ═══ SALES & ROI TAB ═══
+function PromoteIgTab() {
+  const SUGGESTED_CITIES = ['Cozumel', 'Tuxtla Gutiérrez', 'Colima', 'Puebla', 'Chihuahua', 'Tepic'];
+  const [igPost, setIgPost] = useState('');
+  const [cities, setCities] = useState(new Set(['Cozumel', 'Tuxtla Gutiérrez', 'Colima']));
+  const [newCity, setNewCity] = useState('');
+  const [budget, setBudget] = useState(5);
+  const [days, setDays] = useState(14);
+  const [campaignId, setCampaignId] = useState('NEW_TEST');
+  const [campaigns, setCampaigns] = useState([]);
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => { api.getMetaCampaigns().then(setCampaigns).catch(() => setCampaigns([])); }, []);
+
+  const toggleCity = c => setCities(s => { const n = new Set(s); n.has(c) ? n.delete(c) : n.add(c); return n; });
+  const addCity = () => { if (newCity.trim()) { setCities(s => new Set([...s, newCity.trim()])); setNewCity(''); } };
+
+  const run = async (dry) => {
+    setErr(''); setBusy(true); setResult(null); if (dry) setPreview(null);
+    try {
+      const r = await api.promoteIgPost({
+        ig_post: igPost.trim(), cities: [...cities],
+        daily_budget_usd: budget, days, campaign_id: campaignId, dry_run: !!dry
+      });
+      if (dry) setPreview(r); else setResult(r);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const totalLifetime = budget * days * cities.size;
+
+  return (
+    <div className="sec">
+      <h2 className="sh">Promote Instagram Post → New Ad Set per City</h2>
+      <p style={{ fontSize: '.78rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+        Your workflow: post on Instagram first, then promote that exact post on Facebook. Paste the IG post URL or shortcode, pick cities, the wizard creates one PAUSED ad set per city.
+        <b style={{ color: 'var(--gold)' }}> Nothing goes live</b> — every ad set is created PAUSED for your review in Meta Ads Manager.
+      </p>
+
+      {/* IG post input */}
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>1 · Instagram post</label>
+        <input value={igPost} onChange={e => setIgPost(e.target.value)}
+          placeholder="https://www.instagram.com/p/Cabc123/  or  shortcode  or  numeric media ID"
+          style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+      </div>
+
+      {/* Cities */}
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>2 · Cities to test ({cities.size} selected)</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.4rem' }}>
+          {[...new Set([...SUGGESTED_CITIES, ...cities])].map(c => (
+            <button key={c} onClick={() => toggleCity(c)}
+              style={{ background: cities.has(c) ? 'var(--grn)' : 'var(--as2)', color: cities.has(c) ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.3rem .7rem', borderRadius: 14, fontSize: '.78rem', cursor: 'pointer', fontWeight: cities.has(c) ? 700 : 400 }}>{cities.has(c) ? '✓ ' : '+ '}{c}</button>
+          ))}
+          <input value={newCity} onChange={e => setNewCity(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCity()}
+            placeholder="+ add city"
+            style={{ background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.3rem .6rem', borderRadius: 14, fontSize: '.78rem', width: 110 }} />
+        </div>
+      </div>
+
+      {/* Budget */}
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Daily budget per city (USD)</label>
+          <input type="number" value={budget} onChange={e => setBudget(parseFloat(e.target.value) || 0)} min="1" step="1"
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Duration (days)</label>
+          <input type="number" value={days} onChange={e => setDays(parseInt(e.target.value) || 0)} min="3" step="1"
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+        </div>
+        <div style={{ flex: 2, fontSize: '.85rem', color: 'var(--at)' }}>
+          <div style={{ color: 'var(--at2)', fontSize: '.7rem', textTransform: 'uppercase' }}>Total commitment</div>
+          <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--gold)' }}>${budget * days} × {cities.size} cities = ${totalLifetime}</div>
+        </div>
+      </div>
+
+      {/* Campaign */}
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>4 · Campaign</label>
+        <select value={campaignId} onChange={e => setCampaignId(e.target.value)}
+          style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }}>
+          <option value="NEW_TEST">🆕 Create new TEST campaign (auto-named)</option>
+          {campaigns.map(c => <option key={c.id} value={c.id}>{c.status === 'ACTIVE' ? '🟢 ' : '⏸️ '}{c.name}</option>)}
+        </select>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: '.6rem' }}>
+        <button onClick={() => run(true)} disabled={busy || !igPost || !cities.size} className="go" style={{ background: 'var(--blu)' }}>
+          {busy ? 'Working…' : '🧪 Dry-run preview'}
+        </button>
+        <button onClick={() => run(false)} disabled={busy || !igPost || !cities.size} className="go">
+          {busy ? 'Creating…' : '✅ Create PAUSED on Meta'}
+        </button>
+      </div>
+
+      {err && <div className="err" style={{ marginTop: '1rem' }}>{err}</div>}
+
+      {/* Preview output */}
+      {preview && (
+        <div style={{ marginTop: '1.5rem', background: 'var(--as2)', padding: '1rem', borderRadius: 6, border: '1px dashed var(--blu)' }}>
+          <b style={{ color: 'var(--blu)' }}>🧪 Dry-run preview — nothing actually created</b>
+          <pre style={{ fontSize: '.72rem', color: 'var(--at)', marginTop: '.5rem', whiteSpace: 'pre-wrap' }}>{JSON.stringify(preview, null, 2)}</pre>
+        </div>
+      )}
+
+      {/* Real result */}
+      {result && (
+        <div style={{ marginTop: '1.5rem', background: 'var(--as2)', padding: '1rem', borderRadius: 6, border: `1px solid ${result.ok ? 'var(--grn)' : 'var(--red)'}` }}>
+          <b style={{ color: result.ok ? 'var(--grn)' : 'var(--red)' }}>{result.ok ? '✅ Created on Meta (PAUSED)' : '❌ Error'}</b>
+          {result.ok && (<>
+            <p style={{ fontSize: '.78rem', color: 'var(--at2)', margin: '.4rem 0' }}>Campaign: <code>{result.campaign_id}</code> · IG media: <code>{result.ig_media_id}</code> · Each ad set: ${result.lifetime_budget_usd_each} lifetime, ends {result.end_time?.slice(0, 10)}</p>
+            <table style={{ width: '100%', marginTop: '.5rem', fontSize: '.78rem' }}>
+              <thead><tr><th align="left">City</th><th align="left">Ad Set</th><th align="left">Ad Set ID</th><th align="left">Status</th></tr></thead>
+              <tbody>
+                {result.results.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.city}</td>
+                    <td>{r.name || '—'}</td>
+                    <td><code style={{ fontSize: '.7rem' }}>{r.adset_id || '—'}</code></td>
+                    <td style={{ color: r.error ? 'var(--red)' : 'var(--grn)' }}>{r.error ? r.error : 'PAUSED'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{ fontSize: '.75rem', color: 'var(--gold)', marginTop: '.6rem' }}>⚠️ {result.note}</p>
+          </>)}
+          {!result.ok && <pre style={{ fontSize: '.72rem' }}>{JSON.stringify(result, null, 2)}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DailyHealthTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1691,13 +1830,14 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['promote', 'Promote IG 📸'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
 
           {tab === 'overview' && <OverviewTab camps={camps} avgCPR={avgCPR} funnel={funnel} weekly={weekly} totals={data.totals} dowRich={data.dowRich} ads={ads} nDays={nDays} />}
           {tab === 'health' && <DailyHealthTab />}
+          {tab === 'promote' && <PromoteIgTab />}
           {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
           {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
           {tab === 'salesroi' && <SalesROITab />}
