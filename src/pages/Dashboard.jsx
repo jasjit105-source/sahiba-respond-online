@@ -1040,12 +1040,24 @@ function PromoteIgTab() {
   const [savedIgUserId, setSavedIgUserId] = useState('');
   const [savingIg, setSavingIg] = useState(false);
 
+  const [health, setHealth] = useState(null);   // for budget-pressure overlay on ad-set chips
   useEffect(() => {
     api.getMetaCampaigns().then(setCampaigns).catch(() => setCampaigns([]));
     api.getLiveAdsets().then(setAdsetList).catch(() => setAdsetList([]));
     api.getSettings().then(s => { setSavedIgUserId(s.ig_user_id || ''); setIgUserId(s.ig_user_id || ''); }).catch(() => {});
+    api.getDailyHealth().then(setHealth).catch(() => {});   // slower; chips render without it first, then upgrade
   }, []);
   const toggleAdset = id => setSelectedAdsets(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Spend pressure per ad-set (from Daily Health). Returns { util, label, color } or null.
+  const pressure = id => {
+    if (!health?.all) return null;
+    const h = health.all.find(x => x.id === id); if (!h || !h.dailyBudget) return null;
+    const avg = h.avg7d || h.spend24h || 0;
+    const util = h.dailyBudget > 0 ? Math.round(100 * avg / h.dailyBudget) : 0;
+    // Color rule: >=85% red (constrained), 30-84 green (healthy), <30 gray (under-delivering)
+    const color = util >= 85 ? 'var(--red)' : util >= 30 ? 'var(--grn)' : 'var(--at3)';
+    return { util, color, label: `$${avg.toFixed(0)}/$${h.dailyBudget.toFixed(0)} (${util}%)` };
+  };
 
   const saveIgUserId = async () => {
     setSavingIg(true);
@@ -1136,12 +1148,17 @@ function PromoteIgTab() {
           <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Pick the ad set(s) to add this IG post to ({selectedAdsets.size} selected)</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem', marginTop: '.4rem' }}>
             {adsetList.length === 0 && <span style={{ color: 'var(--at3)', fontSize: '.78rem' }}>Loading ad sets…</span>}
-            {adsetList.filter(a => a.status === 'ACTIVE').map(a => (
-              <button key={a.id} onClick={() => toggleAdset(a.id)}
-                style={{ background: selectedAdsets.has(a.id) ? 'var(--grn)' : 'var(--as2)', color: selectedAdsets.has(a.id) ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.4rem .7rem', borderRadius: 6, fontSize: '.74rem', cursor: 'pointer', fontWeight: selectedAdsets.has(a.id) ? 700 : 400, textAlign: 'left', maxWidth: 320 }}>
-                {selectedAdsets.has(a.id) ? '✓ ' : '+ '}{a.name}
-              </button>
-            ))}
+            {adsetList.filter(a => a.status === 'ACTIVE').map(a => {
+              const p = pressure(a.id);
+              const isSel = selectedAdsets.has(a.id);
+              return (
+                <button key={a.id} onClick={() => toggleAdset(a.id)} title={p ? `Budget pressure: ${p.label}` : ''}
+                  style={{ background: isSel ? 'var(--grn)' : 'var(--as2)', color: isSel ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', borderLeft: p ? `4px solid ${p.color}` : '1px solid var(--abdr)', padding: '.4rem .7rem', borderRadius: 6, fontSize: '.74rem', cursor: 'pointer', fontWeight: isSel ? 700 : 400, textAlign: 'left', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: '.15rem' }}>
+                  <span>{isSel ? '✓ ' : '+ '}{a.name}</span>
+                  {p && <span style={{ fontSize: '.65rem', color: isSel ? '#222' : p.color, fontWeight: 700 }}>{p.label}</span>}
+                </button>
+              );
+            })}
           </div>
           {selectedAdsets.size > 0 && (
             <p style={{ fontSize: '.72rem', color: 'var(--at2)', marginTop: '.5rem' }}>
