@@ -992,6 +992,149 @@ app.post('/api/repair-schedule', async (req, res) => {
   }
 });
 
+// ─── CREATE CAMPAIGN + AD SET — DIRECT META GRAPH API ───
+// User picks audience archetype + budget + objective → wizard provisions a fresh
+// Campaign + AdSet in Meta, PAUSED for review. Ads attached separately via the
+// Promote IG wizard or manually in Ads Manager.
+const ARCHETYPE_PRESETS = {
+  wholesale_mixcalco_50mi: {
+    label: 'Wholesale — Mixcalco (CDMX 50mi radius)',
+    geo_locations: { custom_locations: [{ latitude: 19.435, longitude: -99.126, radius: 50, distance_unit: 'mile', name: 'Mixcalco 50mi' }], location_types: ['home', 'recent'] },
+    suggested_daily_usd: 35,
+    note: 'Best for B2B wholesale buyers travelling to CDMX. 32× ROAS pattern.'
+  },
+  wholesale_mixcalco_40mi: {
+    label: 'Wholesale — Mixcalco (CDMX 40mi radius)',
+    geo_locations: { custom_locations: [{ latitude: 19.435, longitude: -99.126, radius: 40, distance_unit: 'mile', name: 'Mixcalco 40mi' }], location_types: ['home', 'recent'] },
+    suggested_daily_usd: 30,
+    note: 'Tighter Mixcalco radius. Use if 50mi is too broad.'
+  },
+  beach_13_cities: {
+    label: 'Beach — 13 coastal cities (the proven Sahiba beach mix)',
+    geo_locations: {
+      cities: [
+        { key: '1508006', name: 'Cancún', radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '2812147', name: 'Cozumel', radius: 17, distance_unit: 'mile', country: 'MX' },
+        { key: '2424413', name: 'Chetumal', radius: 25, distance_unit: 'mile', country: 'MX' },
+        { key: '2849831', name: 'Isla Mujeres', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1538168', name: 'Mazatlán', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1534739', name: 'Mérida', radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '2846023', name: 'Nayar', radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '1508007', name: 'Playa del Carmen', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1542466', name: 'Puerto Vallarta', radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '2811810', name: 'Punta de Mita', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '2842817', name: 'Sayulita', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '2802112', name: 'Tulum', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1540648', name: 'Veracruz', radius: 10, distance_unit: 'mile', country: 'MX' }
+      ],
+      location_types: ['home', 'recent']
+    },
+    suggested_daily_usd: 30,
+    note: 'Proven beach-cities audience. Used by your top 3 BEACH ad sets.'
+  },
+  scale_states: {
+    label: 'SCALE States — Aguascalientes + Campeche + Michoacán + Nayarit',
+    geo_locations: {
+      regions: [
+        { key: '2505', name: 'Aguascalientes', country: 'MX' },
+        { key: '2508', name: 'Campeche', country: 'MX' },
+        { key: '2520', name: 'Michoacán de Ocampo', country: 'MX' },
+        { key: '2522', name: 'Nayarit', country: 'MX' }
+      ],
+      location_types: ['home', 'recent']
+    },
+    suggested_daily_usd: 20,
+    note: 'Discovery test pool — 4 highest USD/lead states from Geo ROI analysis.'
+  },
+  custom: { label: 'Custom — I define geo manually below', geo_locations: null, suggested_daily_usd: 15, note: 'Use when none of the presets fit.' }
+};
+
+app.get('/api/campaign-presets', (req, res) => {
+  res.json(Object.entries(ARCHETYPE_PRESETS).map(([k, v]) => ({
+    key: k, label: v.label, suggested_daily_usd: v.suggested_daily_usd, note: v.note,
+    summary: v.geo_locations ? (v.geo_locations.custom_locations ? `${v.geo_locations.custom_locations.length} custom location(s)` : v.geo_locations.cities ? `${v.geo_locations.cities.length} cities` : v.geo_locations.regions ? `${v.geo_locations.regions.length} regions` : 'no geo') : 'custom'
+  })));
+});
+
+app.post('/api/create-campaign-graph', async (req, res) => {
+  const {
+    name, archetype, daily_budget_usd, objective, optimization_goal,
+    age_min, age_max, dry_run, custom_geo
+  } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  if (!archetype || !ARCHETYPE_PRESETS[archetype]) return res.status(400).json({ error: 'invalid archetype — pick from /api/campaign-presets' });
+  if (!daily_budget_usd || daily_budget_usd < 1) return res.status(400).json({ error: 'daily_budget_usd required (USD, >= 1)' });
+
+  const preset = ARCHETYPE_PRESETS[archetype];
+  const geoLocations = archetype === 'custom' ? (custom_geo || null) : preset.geo_locations;
+  if (!geoLocations) return res.status(400).json({ error: 'custom archetype requires custom_geo in body (object with cities/regions/custom_locations)' });
+
+  const obj = objective || 'OUTCOME_ENGAGEMENT';
+  const optGoal = optimization_goal || 'CONVERSATIONS';
+  const pageId = setting('page_id') || '514164875351531';
+  const waNumber = (setting('whatsapp_link', 'https://wa.me/5215657534707')).replace(/^https?:\/\/wa\.me\//, '');
+  const waBusinessPhoneId = setting('whatsapp_business_phone_number_id', '801380323055565');
+  const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, '').slice(2, 8);
+  const adAccountPath = `/act_${AD_ACCOUNT_ID.replace(/^act_/, '')}`;
+  const steps = [];
+
+  try {
+    const campaignName = `${name.toUpperCase().replace(/[^A-Z0-9_-]/g, '')}-${dateTag}`;
+    const adsetName = `${campaignName}-${archetype.toUpperCase()}`;
+
+    let campaignId = null, adsetId = null;
+
+    if (dry_run) {
+      steps.push(`DRY-RUN: would create campaign "${campaignName}" (objective=${obj}, status=PAUSED)`);
+      steps.push(`DRY-RUN: would create ad set "${adsetName}" (optim=${optGoal}, daily=$${daily_budget_usd}, dest=WHATSAPP)`);
+    } else {
+      // 1. Create the campaign
+      const camp = await graphCall('POST', `${adAccountPath}/campaigns`, {
+        name: campaignName, objective: obj, status: 'PAUSED', special_ad_categories: []
+      });
+      campaignId = camp?.id;
+      if (!campaignId) return res.status(500).json({ error: 'campaign create returned no id', detail: camp, steps });
+      steps.push(`Created campaign ${campaignId} "${campaignName}"`);
+
+      // 2. Create the ad set inside it
+      const promotedObject = { page_id: pageId, whatsapp_phone_number: waNumber, whats_app_business_phone_number_id: waBusinessPhoneId, smart_pse_enabled: false };
+      const targeting = {
+        age_min: age_min || 25,
+        age_max: age_max || 65,
+        geo_locations: geoLocations
+      };
+      const adset = await graphCall('POST', `${adAccountPath}/adsets`, {
+        name: adsetName,
+        campaign_id: campaignId,
+        status: 'PAUSED',
+        daily_budget: Math.round(daily_budget_usd * 100),
+        billing_event: 'IMPRESSIONS',
+        optimization_goal: optGoal,
+        destination_type: 'WHATSAPP',
+        promoted_object: promotedObject,
+        targeting,
+        bid_strategy: 'LOWEST_COST_WITHOUT_CAP'
+      });
+      adsetId = adset?.id;
+      if (!adsetId) return res.status(500).json({ error: 'adset create returned no id', detail: adset, steps, campaign_id: campaignId });
+      steps.push(`Created ad set ${adsetId} "${adsetName}" ($${daily_budget_usd}/day, PAUSED)`);
+    }
+
+    res.json({
+      ok: true,
+      campaign: { id: campaignId, name: campaignName, objective: obj, status: 'PAUSED' },
+      adset: { id: adsetId, name: adsetName, daily_budget_usd, optimization_goal: optGoal, destination_type: 'WHATSAPP', archetype },
+      preset_summary: preset.note,
+      steps,
+      note: dry_run
+        ? 'DRY-RUN: nothing created on Meta. Re-submit without dry_run to actually provision.'
+        : 'Campaign + Ad Set created PAUSED. Now attach an ad via the Promote IG tab (pick this ad set in add_to_existing mode) OR in Meta Ads Manager.'
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, steps });
+  }
+});
+
 // ─── PROMOTE IG POST — DIRECT META GRAPH API ───
 // Properly wires Spark Ads with WhatsApp CTA + wa.me link (which Pipeboard's MCP
 // can't do due to its 6-parameter cap). Used for add_to_existing mode when the

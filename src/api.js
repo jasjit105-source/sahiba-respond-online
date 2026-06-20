@@ -23,6 +23,8 @@ export const api = {
   getGeoROI: (days) => request('GET', `/geo-roi?days=${days || 90}`),
   getDailyHealth: () => request('GET', '/daily-health'),
   adsetAction: (data) => request('POST', '/adset-action', data),
+  getCampaignPresets: () => request('GET', '/campaign-presets'),
+  createCampaign: (data) => request('POST', '/create-campaign-graph', data),
   getMetaCampaigns: () => request('GET', '/meta-campaigns'),
   promoteIgPost: (data) => request('POST', '/promote-ig-post', data),
   getSettings: () => request('GET', '/settings'),

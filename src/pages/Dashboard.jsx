@@ -1020,6 +1020,162 @@ function HourTab({ hourRich }) {
 }
 
 // ═══ SALES & ROI TAB ═══
+function NewCampaignTab() {
+  const [presets, setPresets] = useState([]);
+  const [name, setName] = useState('');
+  const [archetype, setArchetype] = useState('');
+  const [budget, setBudget] = useState(20);
+  const [objective, setObjective] = useState('OUTCOME_ENGAGEMENT');
+  const [optGoal, setOptGoal] = useState('CONVERSATIONS');
+  const [ageMin, setAgeMin] = useState(25);
+  const [ageMax, setAgeMax] = useState(65);
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => { api.getCampaignPresets().then(setPresets).catch(() => setPresets([])); }, []);
+
+  // When archetype changes, suggest its budget
+  useEffect(() => {
+    const p = presets.find(x => x.key === archetype);
+    if (p?.suggested_daily_usd) setBudget(p.suggested_daily_usd);
+  }, [archetype, presets]);
+
+  const run = async (dry) => {
+    setErr(''); setBusy(true); setResult(null); if (dry) setPreview(null);
+    try {
+      const r = await api.createCampaign({
+        name: name.trim(), archetype, daily_budget_usd: budget,
+        objective, optimization_goal: optGoal,
+        age_min: ageMin, age_max: ageMax, dry_run: !!dry
+      });
+      if (dry) setPreview(r); else setResult(r);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const monthlyEstimate = budget * 30;
+  const selected = presets.find(p => p.key === archetype);
+
+  return (
+    <div className="sec">
+      <h2 className="sh">🚀 New Campaign Wizard</h2>
+      <p style={{ fontSize: '.78rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+        Provisions a fresh PAUSED campaign + ad set in Meta via Graph API. WhatsApp destination + Sahiba page baked in.
+        <b style={{ color: 'var(--gold)' }}> Nothing goes live</b> — you review in Meta Ads Manager and unpause when ready.
+        Attach ads via the Promote IG tab (after this) or Meta Ads Manager directly.
+      </p>
+
+      {/* 1. Name */}
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>1 · Campaign name (short, no spaces — date auto-appended)</label>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. MIXCALCO  or  BEACH-CITIES  or  VESTIDO517-TEST"
+          style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem', fontFamily: 'monospace' }} />
+        <p style={{ fontSize: '.7rem', color: 'var(--at3)', margin: '.2rem 0 0' }}>Becomes: <code>{(name || 'YOUR_NAME').toUpperCase().replace(/[^A-Z0-9_-]/g, '')}-{new Date().toISOString().slice(2, 10).replace(/-/g, '')}</code></p>
+      </div>
+
+      {/* 2. Archetype */}
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>2 · Audience archetype (geo preset)</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '.4rem', marginTop: '.4rem' }}>
+          {presets.map(p => (
+            <button key={p.key} onClick={() => setArchetype(p.key)}
+              style={{ background: archetype === p.key ? 'var(--grn)' : 'var(--as2)', color: archetype === p.key ? '#000' : 'var(--at)', border: '1px solid var(--abdr)', padding: '.6rem .8rem', borderRadius: 6, fontSize: '.82rem', cursor: 'pointer', textAlign: 'left', fontWeight: archetype === p.key ? 700 : 400 }}>
+              <div>{archetype === p.key ? '✓ ' : '+ '}{p.label}</div>
+              <div style={{ fontSize: '.7rem', color: archetype === p.key ? '#222' : 'var(--at3)', marginTop: '.2rem' }}>
+                {p.summary} · suggested ${p.suggested_daily_usd}/day · {p.note}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 3. Budget + Age */}
+      <div style={{ display: 'flex', gap: '.8rem', marginBottom: '1rem', alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>3 · Daily budget (USD)</label>
+          <input type="number" value={budget} onChange={e => setBudget(parseFloat(e.target.value) || 0)} min="1" step="1"
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Age min</label>
+          <input type="number" value={ageMin} onChange={e => setAgeMin(parseInt(e.target.value) || 18)} min="18" max="65"
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Age max</label>
+          <input type="number" value={ageMax} onChange={e => setAgeMax(parseInt(e.target.value) || 65)} min="18" max="65"
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }} />
+        </div>
+        <div style={{ flex: 2, fontSize: '.85rem', color: 'var(--at)' }}>
+          <div style={{ color: 'var(--at2)', fontSize: '.7rem', textTransform: 'uppercase' }}>Monthly est.</div>
+          <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--gold)' }}>${monthlyEstimate.toLocaleString('en-US')}</div>
+        </div>
+      </div>
+
+      {/* 4. Advanced (objective + optim) */}
+      <div style={{ display: 'flex', gap: '.8rem', marginBottom: '1rem' }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>4 · Objective</label>
+          <select value={objective} onChange={e => setObjective(e.target.value)}
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }}>
+            <option value="OUTCOME_ENGAGEMENT">Engagement (default — matches existing Sahiba ads)</option>
+            <option value="OUTCOME_SALES">Sales (conversion-optimized)</option>
+            <option value="OUTCOME_AWARENESS">Awareness (broadest reach)</option>
+            <option value="OUTCOME_TRAFFIC">Traffic (link clicks)</option>
+          </select>
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)', textTransform: 'uppercase' }}>Optimization goal</label>
+          <select value={optGoal} onChange={e => setOptGoal(e.target.value)}
+            style={{ width: '100%', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', padding: '.55rem', borderRadius: 6, fontSize: '.85rem', marginTop: '.3rem' }}>
+            <option value="CONVERSATIONS">Conversations (WhatsApp chats)</option>
+            <option value="MESSAGING_PURCHASE_CONVERSION">Messaging Purchase Conversion (Sahiba's current default)</option>
+            <option value="REACH">Reach</option>
+            <option value="IMPRESSIONS">Impressions</option>
+            <option value="LINK_CLICKS">Link clicks</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: '.6rem' }}>
+        <button onClick={() => run(true)} disabled={busy || !name || !archetype} className="go" style={{ background: 'var(--blu)' }}>
+          {busy ? 'Working…' : '🧪 Dry-run preview'}
+        </button>
+        <button onClick={() => run(false)} disabled={busy || !name || !archetype} className="go">
+          {busy ? 'Creating…' : '✅ Create PAUSED on Meta'}
+        </button>
+      </div>
+
+      {err && <div className="err" style={{ marginTop: '1rem' }}>{err}</div>}
+
+      {preview && (
+        <div style={{ marginTop: '1.5rem', background: 'var(--as2)', padding: '1rem', borderRadius: 6, border: '1px dashed var(--blu)' }}>
+          <b style={{ color: 'var(--blu)' }}>🧪 Dry-run preview — nothing actually created</b>
+          <pre style={{ fontSize: '.72rem', color: 'var(--at)', marginTop: '.5rem', whiteSpace: 'pre-wrap' }}>{JSON.stringify(preview, null, 2)}</pre>
+        </div>
+      )}
+
+      {result && (
+        <div style={{ marginTop: '1.5rem', background: 'var(--as2)', padding: '1rem', borderRadius: 6, border: `1px solid ${result.ok ? 'var(--grn)' : 'var(--red)'}` }}>
+          <b style={{ color: result.ok ? 'var(--grn)' : 'var(--red)' }}>{result.ok ? '✅ Created on Meta (PAUSED)' : '❌ Failed'}</b>
+          {result.ok && (<>
+            <p style={{ fontSize: '.78rem', color: 'var(--at2)', margin: '.4rem 0' }}>
+              Campaign: <code>{result.campaign.id}</code> "{result.campaign.name}"<br/>
+              Ad Set: <code>{result.adset.id}</code> "{result.adset.name}"<br/>
+              ${result.adset.daily_budget_usd}/day, {result.adset.optimization_goal}, dest={result.adset.destination_type}
+            </p>
+            <p style={{ fontSize: '.75rem', color: 'var(--gold)', marginTop: '.6rem' }}>⚠️ {result.note}</p>
+          </>)}
+          {!result.ok && <pre style={{ fontSize: '.72rem' }}>{JSON.stringify(result, null, 2)}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PromoteIgTab() {
   const SUGGESTED_CITIES = ['Cozumel', 'Tuxtla Gutiérrez', 'Colima', 'Puebla', 'Chihuahua', 'Tepic'];
   const [mode, setMode] = useState('add_to_existing');     // 'add_to_existing' (normal) | 'test' (discovery)
@@ -2004,7 +2160,7 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['promote', 'Promote IG 📸'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['newcamp', 'New Campaign 🚀'], ['promote', 'Promote IG 📸'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
@@ -2012,6 +2168,7 @@ export default function Dashboard() {
           {tab === 'overview' && <OverviewTab camps={camps} avgCPR={avgCPR} funnel={funnel} weekly={weekly} totals={data.totals} dowRich={data.dowRich} ads={ads} nDays={nDays} />}
           {tab === 'health' && <DailyHealthTab />}
           {tab === 'promote' && <PromoteIgTab />}
+          {tab === 'newcamp' && <NewCampaignTab />}
           {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
           {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
           {tab === 'salesroi' && <SalesROITab />}
