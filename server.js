@@ -1019,27 +1019,20 @@ app.post('/api/promote-ig-post-graph', async (req, res) => {
     if (!igMediaId) return res.status(400).json({ error: 'Could not resolve IG post', detail: resolved, steps });
     steps.push(`Resolved IG post → media_id ${igMediaId}`);
 
-    // 2. Create creative with FULL object_story_spec — WhatsApp CTA + wa.me link
-    // For Spark Ads from an IG reel, Meta wants `instagram_actor_id` + `video_data` with the CTA inside.
+    // 2. Create creative — minimal Spark Ads pattern. The ad set's promoted_object
+    //    already specifies WHATSAPP destination + phone, so the creative just needs
+    //    to identify the IG media + IG account + Page. Meta wires the CTA automatically
+    //    based on the ad set's destination_type.
     const creativeName = `IG${igMediaId.slice(-8)}-${dateTag}-graph`;
-    const objectStorySpec = {
-      page_id: pageId,
-      instagram_actor_id: igUserId,
-      video_data: {
-        video_id: igMediaId,                   // Spark-Ad shortcut: the IG media id works here
-        call_to_action: {
-          type: 'WHATSAPP_MESSAGE',
-          value: { link: waLink, app_destination: 'WHATSAPP' }
-        }
-      }
-    };
     let creativeId = null;
     if (dry_run) {
-      steps.push(`DRY-RUN: would create creative "${creativeName}" with WhatsApp CTA → ${waLink}`);
+      steps.push(`DRY-RUN: would create creative "${creativeName}" (Spark Ad, WhatsApp destination inherited from ad set)`);
     } else {
       const cr = await graphCall('POST', `/act_${AD_ACCOUNT_ID.replace(/^act_/, '')}/adcreatives`, {
         name: creativeName,
-        object_story_spec: objectStorySpec
+        source_instagram_media_id: igMediaId,
+        instagram_user_id: igUserId,
+        object_story_spec: { page_id: pageId, instagram_user_id: igUserId }
       });
       creativeId = cr?.id;
       if (!creativeId) return res.status(500).json({ error: 'creative create returned no id', detail: cr, steps });
