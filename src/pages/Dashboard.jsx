@@ -1020,6 +1020,106 @@ function HourTab({ hourRich }) {
 }
 
 // ═══ SALES & ROI TAB ═══
+function TikTokTab() {
+  const [data, setData] = useState(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((d) => {
+    setLoading(true);
+    api.getTiktokSummary(d).then(setData).catch(e => setData({ ok: false, error: e.message })).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(days); }, [load, days]);
+
+  if (loading) return <div className="ld"><div className="sp"></div><p>Loading TikTok summary…</p></div>;
+  if (!data || !data.ok) return <div className="sec"><h2 className="sh">TikTok</h2><div className="err">Error: {data?.error || 'no data'}</div></div>;
+
+  const a = data.advertiser;
+  const $u = (n, dec = 0) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  const mx = n => '$' + Math.round(n || 0).toLocaleString('en-US') + ' MXN';
+  const statusColor = s => s === 'STATUS_ENABLE' ? 'var(--grn)' : 'var(--at3)';
+
+  return (
+    <>
+      <div className="sec">
+        <h2 className="sh">🎵 TikTok — {a?.name || 'Loading'} ({a?.company || ''})</h2>
+        <p style={{ fontSize: '.78rem', color: 'var(--at2)', marginBottom: '.75rem' }}>
+          Live data from your TikTok Ad Account via Pipeboard. Window: last {data.window.days} days ({data.window.start_date} → {data.window.end_date}).
+          Account currency: <b>{a?.currency || '?'}</b> · TZ: {a?.timezone || '?'} · Balance: {mx(a?.balance || 0)}
+        </p>
+        <div style={{ display: 'flex', gap: '.5rem', alignItems: 'center', marginBottom: '1rem' }}>
+          <label style={{ fontSize: '.75rem', color: 'var(--at2)' }}>Window:</label>
+          {[7, 14, 30, 60, 90].map(d => (
+            <button key={d} className={`tab ${days === d ? 'active' : ''}`} onClick={() => setDays(d)} style={{ padding: '.3rem .75rem', fontSize: '.75rem' }}>{d}d</button>
+          ))}
+        </div>
+
+        <div className="kr">
+          <div className="k">
+            <div className="l">Account Status</div>
+            <div className="v" style={{ color: statusColor(a?.status), fontSize: '1rem' }}>{a?.status === 'STATUS_ENABLE' ? '🟢 Active' : a?.status || '?'}</div>
+            <div className="s">{a?.account_type || ''} · {a?.country || '?'}</div>
+          </div>
+          <div className="k">
+            <div className="l">Campaigns ({data.window.days}d)</div>
+            <div className="v" style={{ color: data.campaign_count ? 'var(--grn)' : 'var(--at3)' }}>{data.campaign_count}</div>
+            <div className="s">{data.campaign_count === 0 ? 'no ads yet' : `${data.campaigns.filter(c => c.status === 'ENABLE').length} enabled`}</div>
+          </div>
+          <div className="k">
+            <div className="l">Spend ({data.window.days}d)</div>
+            <div className="v" style={{ color: 'var(--grn)' }}>{mx(data.spend.total_mxn)}</div>
+            <div className="s">{$u((data.spend.total_mxn || 0) / 18, 0)} USD equiv @ 18</div>
+          </div>
+          <div className="k">
+            <div className="l">TikTok Shop Vouchers</div>
+            <div className="v" style={{ color: 'var(--gold)' }}>{mx(data.tiktok_shop_voucher_mxn)}</div>
+            <div className="s">~${(data.tiktok_shop_voucher_mxn / 18).toLocaleString('en-US', {maximumFractionDigits: 0})} USD free ad credit available</div>
+          </div>
+        </div>
+      </div>
+
+      {data.campaign_count === 0 ? (
+        <div className="sec">
+          <h2 className="sh">No campaigns yet — ready to launch your first TikTok ad</h2>
+          <p style={{ fontSize: '.85rem', color: 'var(--at2)' }}>{data.note}</p>
+          <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: 'var(--gold)' }}>
+            <b style={{ color: 'var(--gold)' }}>🎯 Recommended first move (Phase 4)</b>
+            <p style={{ margin: '.4rem 0 0', fontSize: '.78rem' }}>
+              Boost an existing organic TikTok video as a <b>Spark Ad</b> targeted at beach cities (Cancún, Mérida, Playa del Carmen).
+              Conservative $5-10/day for 14 days. Pay with the MX$57,000 voucher pool — zero out-of-pocket cost.
+              The "Launch TikTok Campaign" wizard tab is coming soon — for now, use TikTok Ads Manager directly.
+            </p>
+            <a href={`https://ads.tiktok.com/i18n/dashboard?aadvid=${a?.id || ''}`} target="_blank" rel="noreferrer"
+              style={{ display: 'inline-block', marginTop: '.6rem', background: 'var(--gold)', color: '#000', padding: '.5rem 1rem', borderRadius: 6, textDecoration: 'none', fontSize: '.82rem', fontWeight: 700 }}>
+              Open TikTok Ads Manager →
+            </a>
+          </div>
+        </div>
+      ) : (
+        <div className="sec">
+          <h2 className="sh">Campaigns</h2>
+          <div className="tw">
+            <table>
+              <thead><tr><th>Name</th><th>Status</th><th>Objective</th><th className="r">Budget</th><th>Created</th></tr></thead>
+              <tbody>
+                {data.campaigns.map(c => (
+                  <tr key={c.id}>
+                    <td style={{ fontWeight: 600 }}>{c.name}</td>
+                    <td><span style={{ background: c.status === 'ENABLE' ? 'var(--grn)' : 'var(--at3)', color: '#000', padding: '1px 7px', borderRadius: 3, fontSize: '.7rem' }}>{c.status}</span></td>
+                    <td style={{ fontSize: '.75rem' }}>{c.objective}</td>
+                    <td className="r">{mx(c.budget)}</td>
+                    <td style={{ fontSize: '.72rem', color: 'var(--at3)' }}>{c.create_time?.slice(0, 10) || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function NewCampaignTab() {
   const [presets, setPresets] = useState([]);
   const [name, setName] = useState('');
@@ -2160,7 +2260,7 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['newcamp', 'New Campaign 🚀'], ['promote', 'Promote IG 📸'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['newcamp', 'New Campaign 🚀'], ['promote', 'Promote IG 📸'], ['tiktok', 'TikTok 🎵'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
@@ -2169,6 +2269,7 @@ export default function Dashboard() {
           {tab === 'health' && <DailyHealthTab />}
           {tab === 'promote' && <PromoteIgTab />}
           {tab === 'newcamp' && <NewCampaignTab />}
+          {tab === 'tiktok' && <TikTokTab />}
           {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
           {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
           {tab === 'salesroi' && <SalesROITab />}

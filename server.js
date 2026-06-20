@@ -70,7 +70,29 @@ function saveDb() {
 }
 
 // ═══ PIPEBOARD MCP CLIENT ═══
+const TIKTOK_MCP_URL = 'https://mcp.pipeboard.co/tiktok-ads-mcp';
 let requestId = 0;
+
+// TikTok MCP — same Bearer auth, different endpoint
+async function tiktokCall(toolName, args = {}) {
+  requestId++;
+  const res = await fetch(TIKTOK_MCP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'Authorization': `Bearer ${PIPEBOARD_TOKEN}` },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', id: requestId, params: { name: toolName, arguments: args } })
+  });
+  const raw = await res.text();
+  let parsed;
+  if (raw.startsWith('event:') || raw.startsWith('data:')) {
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('data:')) { try { parsed = JSON.parse(line.slice(5).trim()); break; } catch {} }
+    }
+  } else { try { parsed = JSON.parse(raw); } catch { return { raw }; } }
+  // Unwrap content[0].text → inner JSON
+  const txt = parsed?.result?.content?.[0]?.text;
+  if (txt) { try { return JSON.parse(txt); } catch { return { raw: txt }; } }
+  return parsed?.result || parsed;
+}
 
 async function mcpCall(toolName, args = {}) {
   requestId++;
@@ -1060,6 +1082,60 @@ app.get('/api/campaign-presets', (req, res) => {
     key: k, label: v.label, suggested_daily_usd: v.suggested_daily_usd, note: v.note,
     summary: v.geo_locations ? (v.geo_locations.custom_locations ? `${v.geo_locations.custom_locations.length} custom location(s)` : v.geo_locations.cities ? `${v.geo_locations.cities.length} cities` : v.geo_locations.regions ? `${v.geo_locations.regions.length} regions` : 'no geo') : 'custom'
   })));
+});
+
+// ─── TIKTOK SUMMARY ───
+// Pulls advertiser info + campaigns + last-N-days spend for SAHIBA's TikTok ad account
+// via Pipeboard's TikTok MCP. Read-only. Foundation for the 🎵 TikTok dashboard tab.
+app.get('/api/tiktok-summary', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+    const advId = setting('tiktok_advertiser_id');
+    if (!advId) return res.status(400).json({ error: 'tiktok_advertiser_id not set in CRM settings' });
+    const end = new Date().toISOString().slice(0, 10);
+    const start = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+    // Parallel calls — advertiser info + campaigns + spend
+    const [info, campsRaw, spend] = await Promise.allSettled([
+      tiktokCall('get_tiktok_advertiser_info', { advertiser_id: advId }),
+      tiktokCall('get_tiktok_campaigns', { advertiser_id: advId }),
+      tiktokCall('get_tiktok_insights', {
+        advertiser_id: advId, data_level: 'AUCTION_ADVERTISER', report_type: 'BASIC',
+        metrics: ['spend', 'impressions', 'clicks', 'conversion', 'cpc', 'cpm', 'ctr'],
+        start_date: start, end_date: end
+      })
+    ]);
+
+    const adv = info.status === 'fulfilled' ? (info.value?.advertiser || info.value) : null;
+    const campaigns = campsRaw.status === 'fulfilled' ? (campsRaw.value?.list || campsRaw.value?.data || []) : [];
+    const insights = spend.status === 'fulfilled' ? (spend.value?.metrics || spend.value?.list || []) : [];
+    const totalSpend = insights.reduce((a, r) => a + (parseFloat(r.spend || r.metrics?.spend) || 0), 0);
+
+    res.json({
+      ok: true,
+      window: { days, start_date: start, end_date: end },
+      advertiser: adv ? {
+        id: adv.advertiser_id, name: adv.name, company: adv.company,
+        country: adv.country, currency: adv.currency, timezone: adv.display_timezone,
+        status: adv.status, balance: parseFloat(adv.balance || 0),
+        account_type: adv.advertiser_account_type,
+        business_center_id: adv.owner_bc_id, business_center_name: setting('tiktok_business_center_name', '')
+      } : null,
+      campaigns: campaigns.map(c => ({
+        id: c.campaign_id, name: c.campaign_name, status: c.status,
+        objective: c.objective_type, budget_mode: c.budget_mode, budget: parseFloat(c.budget || 0),
+        create_time: c.create_time, modify_time: c.modify_time
+      })),
+      campaign_count: campaigns.length,
+      spend: { total_mxn: totalSpend, currency: adv?.currency || 'MXN' },
+      tiktok_shop_voucher_mxn: 57000,   // from user's screenshot — Growth Campus stages
+      note: campaigns.length === 0
+        ? 'No campaigns yet. Use the New Campaign wizard (coming in Phase 4) or launch your first via Ads Manager.'
+        : `${campaigns.length} campaigns over last ${days} days, ${totalSpend.toFixed(2)} ${adv?.currency || 'MXN'} spent.`
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.post('/api/create-campaign-graph', async (req, res) => {
