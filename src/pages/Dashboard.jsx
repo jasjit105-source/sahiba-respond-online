@@ -1026,7 +1026,7 @@ function NewCampaignTab() {
   const [archetype, setArchetype] = useState('');
   const [budget, setBudget] = useState(20);
   const [objective, setObjective] = useState('OUTCOME_ENGAGEMENT');
-  const [optGoal, setOptGoal] = useState('CONVERSATIONS');
+  const [optGoal, setOptGoal] = useState('MESSAGING_PURCHASE_CONVERSION');
   const [ageMin, setAgeMin] = useState(25);
   const [ageMax, setAgeMax] = useState(65);
   const [preview, setPreview] = useState(null);

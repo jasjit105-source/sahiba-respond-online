@@ -1088,16 +1088,21 @@ app.post('/api/create-campaign-graph', async (req, res) => {
       steps.push(`DRY-RUN: would create campaign "${campaignName}" (objective=${obj}, status=PAUSED)`);
       steps.push(`DRY-RUN: would create ad set "${adsetName}" (optim=${optGoal}, daily=$${daily_budget_usd}, dest=WHATSAPP)`);
     } else {
-      // 1. Create the campaign
+      // 1. Create the campaign — Meta requires explicit is_adset_budget_sharing_enabled
+      //    on ABO campaigns (where budget is set at ad-set level, not campaign level).
       const camp = await graphCall('POST', `${adAccountPath}/campaigns`, {
-        name: campaignName, objective: obj, status: 'PAUSED', special_ad_categories: []
+        name: campaignName, objective: obj, status: 'PAUSED', special_ad_categories: [],
+        is_adset_budget_sharing_enabled: 'false'
       });
       campaignId = camp?.id;
       if (!campaignId) return res.status(500).json({ error: 'campaign create returned no id', detail: camp, steps });
       steps.push(`Created campaign ${campaignId} "${campaignName}"`);
 
-      // 2. Create the ad set inside it
-      const promotedObject = { page_id: pageId, whatsapp_phone_number: waNumber, whats_app_business_phone_number_id: waBusinessPhoneId, smart_pse_enabled: false };
+      // 2. Create the ad set inside it. promoted_object MINIMAL — Meta auto-detects
+      //    WhatsApp phone from the Page's linked WABA. Adding whatsapp_phone_number
+      //    directly causes "phone not linked to account" error (subcode 1487246)
+      //    even when it IS linked at the Page level.
+      const promotedObject = { page_id: pageId, smart_pse_enabled: false };
       const targeting = {
         age_min: age_min || 25,
         age_max: age_max || 65,
