@@ -107,6 +107,43 @@ async function mcpCall(toolName, args = {}) {
   return JSON.parse(raw);
 }
 
+// Direct Meta Graph API — bypasses Pipeboard's 6-param cap.
+// Used when we need full creative wiring (WhatsApp CTA + wa.me link) that
+// Pipeboard's create_existing_post_ad_creative tool refuses to forward.
+// Token + app_id are stored in the settings table (meta_access_token, meta_app_id).
+const GRAPH_API_VERSION = 'v22.0';
+async function graphCall(method, path, params = {}) {
+  const tokenRow = (() => { try { return db.exec("SELECT value FROM settings WHERE key='meta_access_token'")?.[0]?.values?.[0]?.[0]; } catch { return null; } })();
+  // fall back to direct sqlite if db.exec helper isn't available in this scope
+  let token = tokenRow;
+  if (!token) {
+    const r = get("SELECT value FROM settings WHERE key='meta_access_token'");
+    token = r?.value;
+  }
+  if (!token) throw new Error('meta_access_token not set in CRM settings. Configure in the Promote IG tab.');
+  const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}${path.startsWith('/') ? path : '/' + path}`);
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (method === 'GET') {
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+    url.searchParams.set('access_token', token);
+  } else {
+    const body = { ...params, access_token: token };
+    // Meta expects nested objects as JSON-serialized form fields, not deep JSON.
+    const form = new URLSearchParams();
+    for (const [k, v] of Object.entries(body)) form.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+    opts.body = form.toString();
+    opts.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+  }
+  const res = await fetch(url.toString(), opts);
+  const txt = await res.text();
+  let parsed; try { parsed = JSON.parse(txt); } catch { parsed = { raw: txt }; }
+  if (!res.ok) {
+    const e = parsed?.error || { message: txt };
+    throw new Error(`Graph API ${res.status}: ${e.message || JSON.stringify(e)} (subcode ${e.error_subcode || '—'}, fbtrace ${e.fbtrace_id || '—'})`);
+  }
+  return parsed;
+}
+
 function extractText(mcpResult) {
   if (!mcpResult) return null;
   const content = mcpResult.result?.content || mcpResult.content;
@@ -952,6 +989,89 @@ app.post('/api/repair-schedule', async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message, attempted_schedule: schedule });
+  }
+});
+
+// ─── PROMOTE IG POST — DIRECT META GRAPH API ───
+// Properly wires Spark Ads with WhatsApp CTA + wa.me link (which Pipeboard's MCP
+// can't do due to its 6-parameter cap). Used for add_to_existing mode when the
+// target ad set has destination_type=WHATSAPP — which is every Sahiba ad set today.
+// Mirrors /api/promote-ig-post but uses Meta Graph API directly.
+app.post('/api/promote-ig-post-graph', async (req, res) => {
+  const { ig_post, existing_adset_ids, dry_run } = req.body;
+  if (!ig_post) return res.status(400).json({ error: 'ig_post (URL or ID) required' });
+  if (!existing_adset_ids || !existing_adset_ids.length) return res.status(400).json({ error: 'existing_adset_ids required (at least one target ad set)' });
+
+  const pageId = setting('page_id') || '514164875351531';
+  const igUserId = setting('ig_user_id');
+  const waNumber = setting('whatsapp_link', 'https://wa.me/5215657534707').replace(/^https?:\/\/wa\.me\//, '');
+  const waLink = `https://wa.me/${waNumber}`;
+  const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, '').slice(2, 8);
+  const steps = [];
+
+  try {
+    if (!igUserId) return res.status(400).json({ error: 'ig_user_id setting required (Promote IG tab → setup field)', steps });
+
+    // 1. Resolve IG post to media ID — reuse Pipeboard's resolver (already works,
+    //    no instagram_basic scope needed on our Graph token).
+    const resolved = await resolveIgMedia(ig_post);
+    const igMediaId = String(resolved?.media_id || resolved?.id || '');
+    if (!igMediaId) return res.status(400).json({ error: 'Could not resolve IG post', detail: resolved, steps });
+    steps.push(`Resolved IG post → media_id ${igMediaId}`);
+
+    // 2. Create creative with FULL object_story_spec — WhatsApp CTA + wa.me link
+    // For Spark Ads from an IG reel, Meta wants `instagram_actor_id` + `video_data` with the CTA inside.
+    const creativeName = `IG${igMediaId.slice(-8)}-${dateTag}-graph`;
+    const objectStorySpec = {
+      page_id: pageId,
+      instagram_actor_id: igUserId,
+      video_data: {
+        video_id: igMediaId,                   // Spark-Ad shortcut: the IG media id works here
+        call_to_action: {
+          type: 'WHATSAPP_MESSAGE',
+          value: { link: waLink, app_destination: 'WHATSAPP' }
+        }
+      }
+    };
+    let creativeId = null;
+    if (dry_run) {
+      steps.push(`DRY-RUN: would create creative "${creativeName}" with WhatsApp CTA → ${waLink}`);
+    } else {
+      const cr = await graphCall('POST', `/act_${AD_ACCOUNT_ID.replace(/^act_/, '')}/adcreatives`, {
+        name: creativeName,
+        object_story_spec: objectStorySpec
+      });
+      creativeId = cr?.id;
+      if (!creativeId) return res.status(500).json({ error: 'creative create returned no id', detail: cr, steps });
+      steps.push(`Created creative ${creativeId}`);
+    }
+
+    // 3. For each ad set: create a new ad PAUSED pointing at the new creative
+    const results = [];
+    for (const adsetId of existing_adset_ids) {
+      try {
+        const det = await graphCall('GET', `/${adsetId}`, { fields: 'name,destination_type,optimization_goal' });
+        const adsetName = det?.name || adsetId;
+        const newAdName = `${adsetName}-IG${igMediaId.slice(-6)}-${dateTag}`.slice(0, 100);
+        if (dry_run) { results.push({ adset_id: adsetId, adset_name: adsetName, dry_run: true, would_create_ad: newAdName, destination_type: det?.destination_type }); continue; }
+        const ad = await graphCall('POST', `/${adsetId}/ads`, {
+          name: newAdName, status: 'PAUSED', creative: { creative_id: creativeId }
+        });
+        results.push({ adset_id: adsetId, adset_name: adsetName, ad_id: ad?.id, ad_name: newAdName, ok: !!ad?.id });
+      } catch (e) {
+        results.push({ adset_id: adsetId, error: e.message, ok: false });
+      }
+    }
+    const anyFailed = results.some(r => r.ok === false || r.error);
+    res.json({
+      ok: !anyFailed, mode: 'add_to_existing_graph', ig_media_id: igMediaId, creative_id: creativeId,
+      results, steps,
+      note: anyFailed
+        ? 'One or more ads failed. See each row for the Meta error.'
+        : 'New ads created PAUSED inside your existing ad sets with WhatsApp wiring. Review and unpause in Meta Ads Manager.'
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, steps });
   }
 });
 
