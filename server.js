@@ -1012,20 +1012,26 @@ const ARCHETYPE_PRESETS = {
   beach_13_cities: {
     label: 'Beach — 13 coastal cities (the proven Sahiba beach mix)',
     geo_locations: {
+      // VERIFIED city_key values pulled from BEACH-Bata70Pesos-13PlayaCities-Jun26
+      // (the existing working ad set) on 2026-06-20. DO NOT MAKE UP KEYS —
+      // Meta accepts any numeric key without complaint but resolves it to whatever
+      // city happens to have that ID, even in Colorado USA or Maharashtra India.
+      // To add a new city: search via the search_geo_locations Pipeboard MCP tool
+      // OR Graph API /search?type=adgeolocation&q=<name>&access_token=<TOK>.
       cities: [
-        { key: '1508006', name: 'Cancún', radius: 15, distance_unit: 'mile', country: 'MX' },
-        { key: '2812147', name: 'Cozumel', radius: 17, distance_unit: 'mile', country: 'MX' },
-        { key: '2424413', name: 'Chetumal', radius: 25, distance_unit: 'mile', country: 'MX' },
-        { key: '2849831', name: 'Isla Mujeres', radius: 10, distance_unit: 'mile', country: 'MX' },
-        { key: '1538168', name: 'Mazatlán', radius: 10, distance_unit: 'mile', country: 'MX' },
-        { key: '1534739', name: 'Mérida', radius: 15, distance_unit: 'mile', country: 'MX' },
-        { key: '2846023', name: 'Nayar', radius: 15, distance_unit: 'mile', country: 'MX' },
-        { key: '1508007', name: 'Playa del Carmen', radius: 10, distance_unit: 'mile', country: 'MX' },
-        { key: '1542466', name: 'Puerto Vallarta', radius: 15, distance_unit: 'mile', country: 'MX' },
-        { key: '2811810', name: 'Punta de Mita', radius: 10, distance_unit: 'mile', country: 'MX' },
-        { key: '2842817', name: 'Sayulita', radius: 10, distance_unit: 'mile', country: 'MX' },
-        { key: '2802112', name: 'Tulum', radius: 10, distance_unit: 'mile', country: 'MX' },
-        { key: '1540648', name: 'Veracruz', radius: 10, distance_unit: 'mile', country: 'MX' }
+        { key: '1508006', name: 'Cancún',           radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '1509864', name: 'Chetumal',         radius: 25, distance_unit: 'mile', country: 'MX' },
+        { key: '1524168', name: 'Isla Mujeres',     radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1535012', name: 'Mazatlán',         radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1535184', name: 'Mérida',           radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '1536972', name: 'Nayar',            radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '1540930', name: 'Playa del Carmen', radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1542382', name: 'Puerto Vallarta',  radius: 15, distance_unit: 'mile', country: 'MX' },
+        { key: '1542444', name: 'Punta de Mita',    radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1553756', name: 'Sayulita',         radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1558246', name: 'Tulum',            radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1559085', name: 'Veracruz',         radius: 10, distance_unit: 'mile', country: 'MX' },
+        { key: '1559693', name: 'Xalapa',           radius: 10, distance_unit: 'mile', country: 'MX' }
       ],
       location_types: ['home', 'recent']
     },
