@@ -1107,7 +1107,7 @@ app.get('/api/tiktok-summary', async (req, res) => {
     ]);
 
     const adv = info.status === 'fulfilled' ? (info.value?.advertiser || info.value) : null;
-    const campaigns = campsRaw.status === 'fulfilled' ? (campsRaw.value?.list || campsRaw.value?.data || []) : [];
+    const campaigns = campsRaw.status === 'fulfilled' ? (campsRaw.value?.campaigns || campsRaw.value?.list || campsRaw.value?.data || []) : [];
     const insights = spend.status === 'fulfilled' ? (spend.value?.metrics || spend.value?.list || []) : [];
     const totalSpend = insights.reduce((a, r) => a + (parseFloat(r.spend || r.metrics?.spend) || 0), 0);
 
@@ -1122,7 +1122,7 @@ app.get('/api/tiktok-summary', async (req, res) => {
         business_center_id: adv.owner_bc_id, business_center_name: setting('tiktok_business_center_name', '')
       } : null,
       campaigns: campaigns.map(c => ({
-        id: c.campaign_id, name: c.campaign_name, status: c.status,
+        id: c.campaign_id, name: c.campaign_name, status: c.operation_status || c.status,
         objective: c.objective_type, budget_mode: c.budget_mode, budget: parseFloat(c.budget || 0),
         create_time: c.create_time, modify_time: c.modify_time
       })),
