@@ -26,6 +26,7 @@ export const api = {
   getCampaignPresets: () => request('GET', '/campaign-presets'),
   createCampaign: (data) => request('POST', '/create-campaign-graph', data),
   getTiktokSummary: (days) => request('GET', `/tiktok-summary?days=${days || 30}`),
+  getAdOptimizer: (days) => request('GET', `/ad-optimizer?days=${days || 7}`),
   getMetaCampaigns: () => request('GET', '/meta-campaigns'),
   promoteIgPost: (data) => request('POST', '/promote-ig-post', data),
   getSettings: () => request('GET', '/settings'),

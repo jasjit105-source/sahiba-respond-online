@@ -1020,6 +1020,113 @@ function HourTab({ hourRich }) {
 }
 
 // ═══ SALES & ROI TAB ═══
+function AdOptimizerTab() {
+  const [data, setData] = useState(null);
+  const [days, setDays] = useState(7);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((d) => {
+    setLoading(true);
+    api.getAdOptimizer(d).then(setData).catch(e => setData({ ok: false, error: e.message })).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(days); }, [load, days]);
+
+  if (loading) return <div className="ld"><div className="sp"></div><p>Crunching {days}d of ad performance…</p></div>;
+  if (!data || !data.ok) return <div className="sec"><h2 className="sh">Ad Optimizer</h2><div className="err">Error: {data?.error || 'no data'}</div></div>;
+
+  const $ = n => '$' + Math.round(n || 0).toLocaleString('en-US');
+  const pct = n => (n || 0).toFixed(2) + '%';
+  const tier = t => ({ green:'#3a3', yellow:'#d80', red:'#d33', '?':'#666' }[t] || '#666');
+  const recBadge = (r) => {
+    const colors = { PAUSE:'#d33', SCALE:'#3a3', FATIGUE:'#d80', LEARN:'#888', OK:'#444' };
+    const icons  = { PAUSE:'🛑', SCALE:'🚀', FATIGUE:'😴', LEARN:'🎓', OK:'✓' };
+    return <span style={{ background: colors[r] || '#666', color:'#fff', padding:'2px 8px', borderRadius:3, fontSize:'.7rem', fontWeight:700 }}>{icons[r] || ''} {r}</span>;
+  };
+  const TierDot = ({ t }) => <span style={{ display:'inline-block', width:8, height:8, borderRadius:4, background: tier(t), marginRight:4 }}></span>;
+
+  const adRow = (r) => (
+    <tr key={r.ad_id}>
+      <td style={{ fontSize:'.72rem' }}>{r.adset_name?.slice(0,30)}</td>
+      <td style={{ fontSize:'.72rem', fontWeight:600 }}>{r.ad_name?.slice(0,40) || '—'}</td>
+      <td className="r">{$(r.spend_mxn)}</td>
+      <td className="r">{(r.impressions || 0).toLocaleString()}</td>
+      <td className="r" style={{ color: tier(r.tiers?.ctr) }}><TierDot t={r.tiers?.ctr} />{pct(r.ctr)}</td>
+      <td className="r" style={{ color: tier(r.tiers?.cpc) }}><TierDot t={r.tiers?.cpc} />{$(r.cpc_mxn)}</td>
+      <td className="r" style={{ color: tier(r.tiers?.cpm) }}><TierDot t={r.tiers?.cpm} />{$(r.cpm_mxn)}</td>
+      <td className="r">{r.conversations || 0}</td>
+      <td className="r" style={{ color: tier(r.tiers?.cost_per_conv) }}>{r.cost_per_conv_mxn ? $(r.cost_per_conv_mxn) : '—'}</td>
+      <td className="r" style={{ color: tier(r.tiers?.frequency) }}>{(r.frequency || 0).toFixed(1)}</td>
+      <td>{recBadge(r.recommendation)}</td>
+    </tr>
+  );
+
+  return (
+    <>
+      <div className="sec">
+        <h2 className="sh">🎯 Ad Optimizer — last {data.window.days} days</h2>
+        <p style={{ fontSize:'.78rem', color:'var(--at2)', marginBottom:'.75rem' }}>
+          Per-ad performance with win/lose classification. Take action manually in Meta Ads Manager based on these recommendations.
+          Thresholds calibrated for MX wholesale WhatsApp funnel.
+        </p>
+        <div style={{ display:'flex', gap:'.5rem', marginBottom:'1rem' }}>
+          <label style={{ fontSize:'.75rem', color:'var(--at2)' }}>Window:</label>
+          {[3, 7, 14, 30].map(d => (
+            <button key={d} className={`tab ${days===d?'active':''}`} onClick={()=>setDays(d)} style={{ padding:'.3rem .75rem', fontSize:'.75rem' }}>{d}d</button>
+          ))}
+        </div>
+
+        <div className="kr">
+          <div className="k"><div className="l">Active Ads</div><div className="v">{data.total_active_ads}</div></div>
+          <div className="k"><div className="l">🚀 Scale</div><div className="v" style={{color:'var(--grn)'}}>{data.summary.recommend_scale}</div><div className="s">grow budget 25%</div></div>
+          <div className="k"><div className="l">🛑 Pause</div><div className="v" style={{color:'var(--red,#d33)'}}>{data.summary.recommend_pause}</div><div className="s">underperformers</div></div>
+          <div className="k"><div className="l">😴 Fatigued</div><div className="v" style={{color:'var(--gold)'}}>{data.summary.fatigue_flagged}</div><div className="s">rotate creative</div></div>
+          <div className="k"><div className="l">🎓 Learning</div><div className="v" style={{color:'var(--at2)'}}>{data.summary.still_learning}</div><div className="s">&lt;1k imps</div></div>
+        </div>
+      </div>
+
+      {data.scale.length > 0 && (
+        <div className="sec">
+          <h2 className="sh" style={{color:'var(--grn)'}}>🚀 Scale these (top performers)</h2>
+          <div className="tw"><table>
+            <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+            <tbody>{data.scale.map(adRow)}</tbody>
+          </table></div>
+          {data.scale.map(r => <p key={r.ad_id+'-r'} style={{fontSize:'.72rem', color:'var(--at2)', marginTop:'.3rem'}}>↳ <b>{r.ad_name?.slice(0,30)}</b>: {r.recommendation_reason}</p>)}
+        </div>
+      )}
+
+      {data.pause.length > 0 && (
+        <div className="sec">
+          <h2 className="sh" style={{color:'#d33'}}>🛑 Pause these (underperformers)</h2>
+          <div className="tw"><table>
+            <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+            <tbody>{data.pause.map(adRow)}</tbody>
+          </table></div>
+          {data.pause.map(r => <p key={r.ad_id+'-r'} style={{fontSize:'.72rem', color:'var(--at2)', marginTop:'.3rem'}}>↳ <b>{r.ad_name?.slice(0,30)}</b>: {r.recommendation_reason}</p>)}
+        </div>
+      )}
+
+      {data.fatigue.length > 0 && (
+        <div className="sec">
+          <h2 className="sh" style={{color:'var(--gold)'}}>😴 Audience fatigue — rotate creative</h2>
+          <div className="tw"><table>
+            <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+            <tbody>{data.fatigue.map(adRow)}</tbody>
+          </table></div>
+        </div>
+      )}
+
+      <div className="sec">
+        <h2 className="sh">All Active Ads ({data.all.length})</h2>
+        <div className="tw"><table>
+          <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+          <tbody>{data.all.map(adRow)}</tbody>
+        </table></div>
+      </div>
+    </>
+  );
+}
+
 function TikTokTab() {
   const [data, setData] = useState(null);
   const [days, setDays] = useState(30);
@@ -2260,7 +2367,7 @@ export default function Dashboard() {
           </div>
 
           <div className="tabs">
-            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['newcamp', 'New Campaign 🚀'], ['promote', 'Promote IG 📸'], ['tiktok', 'TikTok 🎵'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
+            {[['overview', 'Overview'], ['health', 'Daily Health 🩺'], ['optimizer', 'Ad Optimizer 🎯'], ['newcamp', 'New Campaign 🚀'], ['promote', 'Promote IG 📸'], ['tiktok', 'TikTok 🎵'], ['bestdays', 'Best Days ⭐'], ['hours', 'Best Hours ⏰'], ['salesroi', 'Sales & ROI 💰'], ['georoi', 'Geo ROI 🗺️'], ['schedule', 'Schedule 🤖'], ['depth', 'Conversation Quality'], ['recs', 'Recommendations'], ['tracker', 'Performance Tracker'], ['daily', 'Daily Spend'], ['ads', 'Ad Breakdown'], ['dow', 'Day of Week']].map(([k, l]) => (
               <button key={k} className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
             ))}
           </div>
@@ -2270,6 +2377,7 @@ export default function Dashboard() {
           {tab === 'promote' && <PromoteIgTab />}
           {tab === 'newcamp' && <NewCampaignTab />}
           {tab === 'tiktok' && <TikTokTab />}
+          {tab === 'optimizer' && <AdOptimizerTab />}
           {tab === 'bestdays' && <BestDaysTab dowRich={data.dowRich} />}
           {tab === 'hours' && <HourTab hourRich={data.hourRich} />}
           {tab === 'salesroi' && <SalesROITab />}

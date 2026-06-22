@@ -1261,8 +1261,7 @@ app.post('/api/promote-ig-post-graph', async (req, res) => {
       const cr = await graphCall('POST', `/act_${AD_ACCOUNT_ID.replace(/^act_/, '')}/adcreatives`, {
         name: creativeName,
         source_instagram_media_id: igMediaId,
-        instagram_user_id: igUserId,
-        object_story_spec: { page_id: pageId, instagram_user_id: igUserId }
+        instagram_user_id: igUserId
       });
       creativeId = cr?.id;
       if (!creativeId) return res.status(500).json({ error: 'creative create returned no id', detail: cr, steps });
@@ -1277,8 +1276,8 @@ app.post('/api/promote-ig-post-graph', async (req, res) => {
         const adsetName = det?.name || adsetId;
         const newAdName = `${adsetName}-IG${igMediaId.slice(-6)}-${dateTag}`.slice(0, 100);
         if (dry_run) { results.push({ adset_id: adsetId, adset_name: adsetName, dry_run: true, would_create_ad: newAdName, destination_type: det?.destination_type }); continue; }
-        const ad = await graphCall('POST', `/${adsetId}/ads`, {
-          name: newAdName, status: 'PAUSED', creative: { creative_id: creativeId }
+        const ad = await graphCall('POST', `/act_${AD_ACCOUNT_ID.replace(/^act_/, '')}/ads`, {
+          name: newAdName, status: 'PAUSED', adset_id: adsetId, creative: { creative_id: creativeId }
         });
         results.push({ adset_id: adsetId, adset_name: adsetName, ad_id: ad?.id, ad_name: newAdName, ok: !!ad?.id });
       } catch (e) {
@@ -2059,6 +2058,135 @@ app.get('/api/geo-roi', async (req, res) => {
       contactStats: { withState: Object.keys(phone2state).length },
       caveat: 'CDMX is flagged REVIEW: both stores are in CDMX, so most CDMX customers walk in without leaving a phone on the POS ticket → phone-match misses them. CDMX usdPerLead is undercounted; evaluate via foot traffic instead.',
       states
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── Ad Optimizer — per-ad performance with win/lose/scale/pause flags ───
+// Reads Meta insights for every ACTIVE ad over the last N days and classifies each
+// against MX-market thresholds. User reviews the recommendations and acts manually
+// in Ads Manager UI (per their workflow — they create + activate ads manually).
+//
+// Thresholds (MX wholesale fashion WhatsApp funnel norms, MXN):
+//   CTR        green > 1.0%  · yellow 0.5-1% · red < 0.5%
+//   CPC        green < $8    · yellow $8-15  · red > $15
+//   CPM        green < $120  · yellow $120-200 · red > $200
+//   Cost/Conv  green < $25   · yellow $25-50 · red > $50
+//   Frequency  green < 2.5   · yellow 2.5-4 · red > 4 (fatigue)
+//
+// Recommendation logic:
+//   PAUSE  — red on CTR OR red on Cost/Conv (after 1000+ impressions)
+//   SCALE  — green on CTR + Cost/Conv + 7-day spend > $20
+//   FATIGUE — red on Frequency (rotate creative)
+//   LEARN  — < 1000 impressions, still in Meta's learning phase
+app.get('/api/ad-optimizer', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const today = new Date().toISOString().slice(0, 10);
+    const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+    // Pull all ACTIVE ad sets first, then all their ads
+    const adsetsRaw = extractText(await mcpCall('get_adsets', { account_id: AD_ACCOUNT_ID }));
+    const rawList = adsetsRaw?.data || (Array.isArray(adsetsRaw) ? adsetsRaw : []);
+    console.log(`[ad-optimizer] get_adsets returned ${rawList.length} ad sets total`);
+    if (rawList.length > 0) console.log(`[ad-optimizer] first ad set keys: ${Object.keys(rawList[0]).join(',')}; status=${rawList[0].status}`);
+    const allAdsets = rawList.filter(a => a.status === 'ACTIVE' || a.effective_status === 'ACTIVE');
+    console.log(`[ad-optimizer] ${allAdsets.length} ACTIVE ad sets after filter`);
+
+    const adsByAdset = {};
+    for (const a of allAdsets) {
+      try {
+        const ar = extractText(await mcpCall('get_ads', { account_id: AD_ACCOUNT_ID, adset_id: a.id, limit: 50 }));
+        const list = ar?.data || (Array.isArray(ar) ? ar : []);
+        adsByAdset[a.id] = list;
+      } catch (e) { adsByAdset[a.id] = []; }
+    }
+
+    // For each ad, pull insights over the window
+    const adRows = [];
+    for (const adset of allAdsets) {
+      for (const ad of adsByAdset[adset.id] || []) {
+        if (ad.status !== 'ACTIVE' && ad.effective_status !== 'ACTIVE') continue;
+        try {
+          const ins = extractText(await mcpCall('get_insights', {
+            object_id: ad.id,
+            time_range: { since, until: today }
+          }));
+          const row = (ins?.data || [])[0] || {};
+          const spend = parseFloat(row.spend) || 0;
+          const imps = parseInt(row.impressions) || 0;
+          const clicks = parseInt(row.clicks) || 0;
+          const ctr = parseFloat(row.ctr) || 0;
+          const cpc = parseFloat(row.cpc) || 0;
+          const cpm = parseFloat(row.cpm) || 0;
+          const freq = parseFloat(row.frequency) || 0;
+          // count messaging conversations from actions array
+          const acts = row.actions || [];
+          const convo = acts.find(x => x.action_type === 'onsite_conversion.messaging_conversation_started_7d' || x.action_type === 'onsite_conversion.total_messaging_connection')?.value || 0;
+          const conversations = parseInt(convo) || 0;
+          const costPerConv = conversations > 0 ? spend / conversations : null;
+          // Convert MX market: assume account in USD; show both. (account currency was confirmed USD)
+          const mxnRate = parseFloat(setting('mxn_rate', '18')) || 18;
+
+          // Tier each metric
+          const tier = (val, g, y) => val == null ? '?' : val <= g ? 'green' : val <= y ? 'yellow' : 'red';
+          const tCTR = ctr >= 1 ? 'green' : ctr >= 0.5 ? 'yellow' : 'red';
+          const tCPC = tier(cpc * mxnRate, 8, 15);
+          const tCPM = tier(cpm * mxnRate, 120, 200);
+          const tCostConv = costPerConv == null ? '?' : tier(costPerConv * mxnRate, 25, 50);
+          const tFreq = freq < 2.5 ? 'green' : freq < 4 ? 'yellow' : 'red';
+
+          // Recommendation
+          let rec = 'OK', recReason = '';
+          if (imps < 1000) { rec = 'LEARN'; recReason = `only ${imps} impressions — still in learning phase`; }
+          else if (tFreq === 'red') { rec = 'FATIGUE'; recReason = `frequency ${freq.toFixed(1)} > 4 — audience saturated, rotate creative`; }
+          else if (tCTR === 'red' || tCostConv === 'red') {
+            rec = 'PAUSE';
+            recReason = tCTR === 'red' ? `CTR ${(ctr).toFixed(2)}% < 0.5%` : `cost/conv $${(costPerConv*mxnRate).toFixed(0)} MXN > $50`;
+          }
+          else if (tCTR === 'green' && (tCostConv === 'green' || conversations === 0) && spend > 20) {
+            rec = 'SCALE'; recReason = `CTR ${ctr.toFixed(2)}% + cost/conv healthy + $${spend.toFixed(0)} spent — bump budget 25%`;
+          }
+
+          adRows.push({
+            ad_id: ad.id, ad_name: ad.name,
+            adset_id: adset.id, adset_name: adset.name,
+            spend_usd: spend, spend_mxn: spend * mxnRate,
+            impressions: imps, clicks, conversations,
+            ctr, cpc_usd: cpc, cpc_mxn: cpc * mxnRate,
+            cpm_usd: cpm, cpm_mxn: cpm * mxnRate,
+            cost_per_conv_usd: costPerConv, cost_per_conv_mxn: costPerConv ? costPerConv * mxnRate : null,
+            frequency: freq,
+            tiers: { ctr: tCTR, cpc: tCPC, cpm: tCPM, cost_per_conv: tCostConv, frequency: tFreq },
+            recommendation: rec, recommendation_reason: recReason
+          });
+        } catch (e) {
+          adRows.push({ ad_id: ad.id, ad_name: ad.name, adset_name: adset.name, error: e.message });
+        }
+      }
+    }
+
+    // Summary buckets
+    const pauseList = adRows.filter(r => r.recommendation === 'PAUSE');
+    const scaleList = adRows.filter(r => r.recommendation === 'SCALE');
+    const fatigueList = adRows.filter(r => r.recommendation === 'FATIGUE');
+    const learnList = adRows.filter(r => r.recommendation === 'LEARN');
+    const okList = adRows.filter(r => r.recommendation === 'OK');
+
+    res.json({
+      ok: true, window: { days, since, until: today },
+      total_active_ads: adRows.length,
+      summary: {
+        recommend_pause: pauseList.length,
+        recommend_scale: scaleList.length,
+        fatigue_flagged: fatigueList.length,
+        still_learning: learnList.length,
+        ok_keep_running: okList.length
+      },
+      pause: pauseList, scale: scaleList, fatigue: fatigueList, learn: learnList, healthy: okList,
+      all: adRows
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
