@@ -438,26 +438,61 @@ app.get('/api/analytics', async (req, res) => {
   const t0 = Date.now();
 
   try {
-    // Parallel: campaigns, daily account totals, ads, hourly breakdown
-    const [campRaw, dailyRaw, adsRaw, hourlyRaw] = await Promise.all([
-      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'campaign', time_range: timeRange }),
-      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'account', time_range: timeRange, time_breakdown: 'day' }),
-      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'ad', time_range: timeRange }),
-      mcpCall('get_insights', { object_id: AD_ACCOUNT_ID, level: 'account', time_range: timeRange, breakdown: 'hourly_stats_aggregated_by_advertiser_time_zone' }).catch(e => ({ _err: e.message }))
+    // Multi-account: pull insights across SAHIBA2026 + Sahiba-MX
+    // Each insight type runs in parallel per account; results concat'd before parsing.
+    const ACCTS = [
+      { id: AD_ACCOUNT_ID, name: 'SAHIBA2026' },
+      { id: 'act_1622779349328736', name: 'Sahiba-MX' },
+    ];
+    const fetchForAcct = (acct) => Promise.all([
+      mcpCall('get_insights', { object_id: acct.id, level: 'campaign', time_range: timeRange }),
+      mcpCall('get_insights', { object_id: acct.id, level: 'account', time_range: timeRange, time_breakdown: 'day' }),
+      mcpCall('get_insights', { object_id: acct.id, level: 'ad', time_range: timeRange }),
+      mcpCall('get_insights', { object_id: acct.id, level: 'account', time_range: timeRange, breakdown: 'hourly_stats_aggregated_by_advertiser_time_zone' }).catch(e => ({ _err: e.message }))
     ]);
+    const perAcct = await Promise.all(ACCTS.map(fetchForAcct));
 
-    const campData = extractText(campRaw);
-    const dailyData = extractText(dailyRaw);
-    const adsData = extractText(adsRaw);
-    const hourlyData = hourlyRaw?._err ? null : extractText(hourlyRaw);
-
-    const campList = campData?.data || (Array.isArray(campData) ? campData : []);
-    const adsList = adsData?.data || (Array.isArray(adsData) ? adsData : []);
+    // Concat campaign + ad data with account tag
+    const campList = [];
+    const adsList = [];
+    const dailyAggregator = {}; // date → merged daily totals
+    let hourlyData = null;
+    perAcct.forEach((acctResults, idx) => {
+      const acctName = ACCTS[idx].name;
+      const [campRaw, dailyRaw, adsRaw, hourlyRaw] = acctResults;
+      const cD = extractText(campRaw); const dD = extractText(dailyRaw); const aD = extractText(adsRaw);
+      const hD = hourlyRaw?._err ? null : extractText(hourlyRaw);
+      (cD?.data || []).forEach(c => { c._account = acctName; campList.push(c); });
+      (aD?.data || []).forEach(a => { a._account = acctName; adsList.push(a); });
+      // Merge daily into aggregator
+      const segs = dD?.segmented_metrics || dD?.data || (Array.isArray(dD) ? dD : []);
+      for (const seg of segs) {
+        const m = seg.metrics || seg;
+        const date = seg.period || seg.date_start || m.date_start;
+        if (!date) continue;
+        if (!dailyAggregator[date]) dailyAggregator[date] = { metrics: { spend: 0, impressions: 0, clicks: 0, reach: 0, actions: [] } };
+        const tgt = dailyAggregator[date].metrics;
+        tgt.spend = (parseFloat(tgt.spend) || 0) + (parseFloat(m.spend) || 0);
+        tgt.impressions = (parseInt(tgt.impressions) || 0) + (parseInt(m.impressions) || 0);
+        tgt.clicks = (parseInt(tgt.clicks) || 0) + (parseInt(m.clicks) || 0);
+        tgt.reach = (parseInt(tgt.reach) || 0) + (parseInt(m.reach) || 0);
+        // Merge actions array
+        for (const act of (m.actions || [])) {
+          const existing = tgt.actions.find(x => x.action_type === act.action_type);
+          if (existing) existing.value = (parseInt(existing.value) || 0) + (parseInt(act.value) || 0);
+          else tgt.actions.push({ ...act });
+        }
+      }
+      if (hD && !hourlyData) hourlyData = hD;  // first non-empty hourly wins
+    });
+    // Convert daily aggregator back to segmented format
+    const dailyData = { segmented_metrics: Object.entries(dailyAggregator).sort((a, b) => a[0].localeCompare(b[0])).map(([date, v]) => ({ period: date, metrics: v.metrics })) };
 
     // Parse campaigns
     const camps = campList.map(c => {
       const ac = c.actions || [];
       return {
+        account: c._account,
         id: c.campaign_id,
         name: c.campaign_name,
         spend: parseFloat(c.spend || 0),
@@ -486,6 +521,7 @@ app.get('/api/analytics', async (req, res) => {
       const depth5 = xA(ac, 'onsite_conversion.messaging_user_depth_5_message_send');
       const spend = parseFloat(a.spend || 0);
       return {
+        account: a._account,
         id: a.ad_id,
         name: a.ad_name,
         campName: a.campaign_name,
