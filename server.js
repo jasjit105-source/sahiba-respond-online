@@ -2087,18 +2087,27 @@ app.get('/api/ad-optimizer', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 
-    // Pull all ACTIVE ad sets first, then all their ads
-    const adsetsRaw = extractText(await mcpCall('get_adsets', { account_id: AD_ACCOUNT_ID }));
-    const rawList = adsetsRaw?.data || (Array.isArray(adsetsRaw) ? adsetsRaw : []);
-    console.log(`[ad-optimizer] get_adsets returned ${rawList.length} ad sets total`);
-    if (rawList.length > 0) console.log(`[ad-optimizer] first ad set keys: ${Object.keys(rawList[0]).join(',')}; status=${rawList[0].status}`);
-    const allAdsets = rawList.filter(a => a.status === 'ACTIVE' || a.effective_status === 'ACTIVE');
-    console.log(`[ad-optimizer] ${allAdsets.length} ACTIVE ad sets after filter`);
+    // Multi-account: loop over every ad account this CRM tracks
+    // SAHIBA2026 = US-billing legacy, Sahiba-MX = MX-billing new
+    const ACCOUNTS = [
+      { id: AD_ACCOUNT_ID, name: 'SAHIBA2026' },
+      { id: 'act_1622779349328736', name: 'Sahiba-MX' },
+    ];
+
+    const allAdsets = [];
+    for (const acct of ACCOUNTS) {
+      const adsetsRaw = extractText(await mcpCall('get_adsets', { account_id: acct.id }));
+      const rawList = adsetsRaw?.data || (Array.isArray(adsetsRaw) ? adsetsRaw : []);
+      const active = rawList.filter(a => a.status === 'ACTIVE' || a.effective_status === 'ACTIVE');
+      console.log(`[ad-optimizer] ${acct.name}: ${active.length} active ad sets`);
+      active.forEach(a => { a._account = acct.name; a._account_id = acct.id; });
+      allAdsets.push(...active);
+    }
 
     const adsByAdset = {};
     for (const a of allAdsets) {
       try {
-        const ar = extractText(await mcpCall('get_ads', { account_id: AD_ACCOUNT_ID, adset_id: a.id, limit: 50 }));
+        const ar = extractText(await mcpCall('get_ads', { account_id: a._account_id, adset_id: a.id, limit: 50 }));
         const list = ar?.data || (Array.isArray(ar) ? ar : []);
         adsByAdset[a.id] = list;
       } catch (e) { adsByAdset[a.id] = []; }
@@ -2151,6 +2160,7 @@ app.get('/api/ad-optimizer', async (req, res) => {
           }
 
           adRows.push({
+            account: adset._account, account_id: adset._account_id,
             ad_id: ad.id, ad_name: ad.name,
             adset_id: adset.id, adset_name: adset.name,
             spend_usd: spend, spend_mxn: spend * mxnRate,

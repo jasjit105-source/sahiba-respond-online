@@ -1046,6 +1046,7 @@ function AdOptimizerTab() {
 
   const adRow = (r) => (
     <tr key={r.ad_id}>
+      <td style={{ fontSize:'.7rem', color: r.account === 'Sahiba-MX' ? 'var(--gold)' : 'var(--at2)', fontWeight: 600 }}>{r.account || '—'}</td>
       <td style={{ fontSize:'.72rem' }}>{r.adset_name?.slice(0,30)}</td>
       <td style={{ fontSize:'.72rem', fontWeight:600 }}>{r.ad_name?.slice(0,40) || '—'}</td>
       <td className="r">{$(r.spend_mxn)}</td>
@@ -1088,7 +1089,7 @@ function AdOptimizerTab() {
         <div className="sec">
           <h2 className="sh" style={{color:'var(--grn)'}}>🚀 Scale these (top performers)</h2>
           <div className="tw"><table>
-            <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+            <thead><tr><th>Acct</th><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
             <tbody>{data.scale.map(adRow)}</tbody>
           </table></div>
           {data.scale.map(r => <p key={r.ad_id+'-r'} style={{fontSize:'.72rem', color:'var(--at2)', marginTop:'.3rem'}}>↳ <b>{r.ad_name?.slice(0,30)}</b>: {r.recommendation_reason}</p>)}
@@ -1099,7 +1100,7 @@ function AdOptimizerTab() {
         <div className="sec">
           <h2 className="sh" style={{color:'#d33'}}>🛑 Pause these (underperformers)</h2>
           <div className="tw"><table>
-            <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+            <thead><tr><th>Acct</th><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
             <tbody>{data.pause.map(adRow)}</tbody>
           </table></div>
           {data.pause.map(r => <p key={r.ad_id+'-r'} style={{fontSize:'.72rem', color:'var(--at2)', marginTop:'.3rem'}}>↳ <b>{r.ad_name?.slice(0,30)}</b>: {r.recommendation_reason}</p>)}
@@ -1110,7 +1111,7 @@ function AdOptimizerTab() {
         <div className="sec">
           <h2 className="sh" style={{color:'var(--gold)'}}>😴 Audience fatigue — rotate creative</h2>
           <div className="tw"><table>
-            <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+            <thead><tr><th>Acct</th><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
             <tbody>{data.fatigue.map(adRow)}</tbody>
           </table></div>
         </div>
@@ -1119,7 +1120,7 @@ function AdOptimizerTab() {
       <div className="sec">
         <h2 className="sh">All Active Ads ({data.all.length})</h2>
         <div className="tw"><table>
-          <thead><tr><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
+          <thead><tr><th>Acct</th><th>Ad Set</th><th>Ad</th><th className="r">Spend</th><th className="r">Imp</th><th className="r">CTR</th><th className="r">CPC</th><th className="r">CPM</th><th className="r">Conv</th><th className="r">$/Conv</th><th className="r">Freq</th><th>Rec</th></tr></thead>
           <tbody>{data.all.map(adRow)}</tbody>
         </table></div>
       </div>
