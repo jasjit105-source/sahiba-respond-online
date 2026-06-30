@@ -1,5 +1,27 @@
 -- Sahiba CRM Database Schema
 
+-- Nightly snapshot of each active ad set's daily budget cap + actual day spend.
+-- Powers the Budget Tracker's historical "designated vs actual" chart with real
+-- data instead of projecting today's cap backwards.
+CREATE TABLE IF NOT EXISTS budget_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  snapshot_date TEXT NOT NULL,             -- YYYY-MM-DD (Mexico City TZ)
+  account TEXT NOT NULL,                   -- "Sahiba-MX"
+  account_id TEXT NOT NULL,                -- "act_1622779349328736"
+  campaign_id TEXT NOT NULL,
+  campaign_name TEXT,
+  campaign_mode TEXT,                      -- 'ABO' | 'CBO'
+  adset_id TEXT NOT NULL,
+  adset_name TEXT,
+  daily_budget_usd REAL,                   -- cap at snapshot time
+  spend_usd REAL,                          -- actual spend for snapshot_date
+  status TEXT,                             -- 'ACTIVE' | 'PAUSED' etc
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(snapshot_date, adset_id)
+);
+CREATE INDEX IF NOT EXISTS idx_budget_snap_date ON budget_snapshots(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_budget_snap_adset ON budget_snapshots(adset_id);
+
 CREATE TABLE IF NOT EXISTS campaigns (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   meta_id TEXT UNIQUE NOT NULL,

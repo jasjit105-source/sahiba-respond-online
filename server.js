@@ -438,10 +438,10 @@ app.get('/api/analytics', async (req, res) => {
   const t0 = Date.now();
 
   try {
-    // Multi-account: pull insights across SAHIBA2026 + Sahiba-MX
+    // Multi-account: Sahiba-MX is the only LIVE account (SAHIBA2026 cut off 2026-06-29
+    // — Meta restriction made it unusable; see project_sahiba2026_winding_down memory).
     // Each insight type runs in parallel per account; results concat'd before parsing.
     const ACCTS = [
-      { id: AD_ACCOUNT_ID, name: 'SAHIBA2026' },
       { id: 'act_1622779349328736', name: 'Sahiba-MX' },
     ];
     const fetchForAcct = (acct) => Promise.all([
@@ -2100,6 +2100,75 @@ app.get('/api/geo-roi', async (req, res) => {
   }
 });
 
+// ─── Budget Snapshot Job — nightly capture of per-adset cap + actual spend ───
+// Runs at 23:55 Mexico City local time (UTC-6, so 05:55 UTC next day). Persists to
+// budget_snapshots table so the historical "designated cap vs actual spend" line
+// in the Budget Tracker is REAL data from that day, not today's cap projected back.
+async function runBudgetSnapshot() {
+  const ACCOUNTS = [{ id: 'act_1622779349328736', name: 'Sahiba-MX' }];
+  // "Today" in Mexico City — snapshot date = today's date in MX TZ
+  const mxNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Mexico_City' }));
+  const snapDate = mxNow.toISOString().slice(0, 10);
+  let inserted = 0;
+  for (const acct of ACCOUNTS) {
+    try {
+      const [adsetsRaw, campsRaw] = await Promise.all([
+        mcpCall('get_adsets', { account_id: acct.id }),
+        mcpCall('get_campaigns', { account_id: acct.id })
+      ]);
+      const campsById = {};
+      (extractText(campsRaw)?.data || []).forEach(c => { campsById[c.id] = c; });
+      const sets = (extractText(adsetsRaw)?.data || []).filter(s => s.status === 'ACTIVE' || s.effective_status === 'ACTIVE');
+      for (const s of sets) {
+        const camp = campsById[s.campaign_id] || {};
+        const dailyB = parseFloat(s.daily_budget || 0) / 100;
+        const campDailyB = parseFloat(camp.daily_budget || 0) / 100;
+        const mode = campDailyB > 0 ? 'CBO' : 'ABO';
+        // Pull today's spend for this ad set
+        let spendToday = 0;
+        try {
+          const ins = extractText(await mcpCall('get_insights', { object_id: s.id, time_range: { since: snapDate, until: snapDate } }));
+          const row = (ins?.data || [])[0] || {};
+          spendToday = parseFloat(row.spend) || 0;
+        } catch {}
+        try {
+          run(`INSERT OR REPLACE INTO budget_snapshots
+                 (snapshot_date, account, account_id, campaign_id, campaign_name, campaign_mode,
+                  adset_id, adset_name, daily_budget_usd, spend_usd, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [snapDate, acct.name, acct.id, s.campaign_id, camp.name || '?', mode,
+             s.id, s.name, dailyB, spendToday, s.status || 'ACTIVE']);
+          inserted++;
+        } catch (e) { console.error('snap insert err:', e.message); }
+      }
+    } catch (e) { console.error('snap acct err:', e.message); }
+  }
+  try { saveDb(); } catch {}
+  console.log(`[budget-snapshot] ${snapDate} — saved ${inserted} ad-set rows`);
+  return { date: snapDate, rows_saved: inserted };
+}
+
+// Manual trigger endpoint (for testing + on-demand)
+app.post('/api/budget-snapshot-now', async (req, res) => {
+  try { res.json({ ok: true, ...(await runBudgetSnapshot()) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Hourly check — runs the snapshot once per day around 23:55 Mexico City time
+let lastSnapshotDate = '';
+setInterval(async () => {
+  try {
+    const mx = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Mexico_City' }));
+    const hh = mx.getHours();
+    const today = mx.toISOString().slice(0, 10);
+    // Fire once between 23:00 and 23:59 MX time, only once per date
+    if (hh === 23 && lastSnapshotDate !== today) {
+      lastSnapshotDate = today;
+      await runBudgetSnapshot();
+    }
+  } catch (e) { console.error('[budget-snapshot] cron err:', e.message); }
+}, 60 * 60 * 1000); // hourly check
+
 // ─── Budget Tracker — daily caps per ad set / campaign / account + spend vs cap ───
 // Pulls current daily_budget from every ACTIVE ad set across all tracked accounts,
 // groups by campaign + account, and merges with /api/analytics daily spend data so
@@ -2110,9 +2179,9 @@ app.get('/api/geo-roi', async (req, res) => {
 // history going forward, the daily_health snapshot job logs nightly to db/daily-reports/.
 app.get('/api/budget-tracker', async (req, res) => {
   try {
+    // Sahiba-MX only (SAHIBA2026 cut off 2026-06-29; see project_sahiba2026_winding_down)
     const ACCOUNTS = [
-      { id: AD_ACCOUNT_ID, name: 'SAHIBA2026', legacy: true },   // winding down
-      { id: 'act_1622779349328736', name: 'Sahiba-MX', legacy: false }, // primary going forward
+      { id: 'act_1622779349328736', name: 'Sahiba-MX', legacy: false },
     ];
 
     // Pull ad sets + campaigns for both accounts in parallel
@@ -2192,13 +2261,30 @@ app.get('/api/budget-tracker', async (req, res) => {
 
     const grandTotalDailyCap = Object.values(byAccount).reduce((s, a) => s + a.total_daily_cap, 0);
 
+    // Historical snapshots — per-day designated cap + spend from budget_snapshots table
+    // Aggregate snapshots by date so the UI can show real "cap vs spend" history.
+    const history = all(
+      `SELECT snapshot_date, SUM(daily_budget_usd) AS cap, SUM(spend_usd) AS spend, COUNT(*) AS adsets
+       FROM budget_snapshots WHERE snapshot_date >= date('now','-30 days')
+       GROUP BY snapshot_date ORDER BY snapshot_date DESC`
+    );
+
     res.json({
       ok: true,
       as_of: new Date().toISOString(),
       grand_total_daily_cap: grandTotalDailyCap,
       by_account: Object.values(byAccount),
       campaigns: campaignsList.sort((a, b) => b.effective_daily_cap - a.effective_daily_cap),
-      adsets: allAdsets.sort((a, b) => b.daily_budget - a.daily_budget)
+      adsets: allAdsets.sort((a, b) => b.daily_budget - a.daily_budget),
+      history: history.map(r => ({
+        date: r.snapshot_date,
+        designated_cap: r.cap || 0,
+        actual_spend: r.spend || 0,
+        adsets: r.adsets || 0
+      })),
+      history_note: history.length === 0
+        ? 'No nightly snapshots yet — first one runs at 23:55 Mexico City time. Hit POST /api/budget-snapshot-now to capture immediately.'
+        : `${history.length} days of real snapshot history available.`
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2228,10 +2314,8 @@ app.get('/api/ad-optimizer', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 
-    // Multi-account: loop over every ad account this CRM tracks
-    // SAHIBA2026 = US-billing legacy, Sahiba-MX = MX-billing new
+    // Multi-account: Sahiba-MX only (SAHIBA2026 cut off 2026-06-29 — Meta restricted).
     const ACCOUNTS = [
-      { id: AD_ACCOUNT_ID, name: 'SAHIBA2026' },
       { id: 'act_1622779349328736', name: 'Sahiba-MX' },
     ];
 

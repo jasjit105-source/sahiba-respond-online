@@ -474,12 +474,23 @@ function BudgetSection({ days, ads }) {
   if (!bt) return <div className="sec"><h2 className="sh">💰 Daily Budget Tracker</h2><div className="ld"><div className="sp"></div><p>Loading budget caps…</p></div></div>;
   if (!bt.ok) return <div className="sec"><h2 className="sh">💰 Daily Budget Tracker</h2><div className="err">Error: {bt.error}</div></div>;
 
-  // Build daily-spend-vs-cap from the existing `days` array (passed in from analytics)
+  // Prefer real snapshot history (accurate per-day cap) when available; fall back to
+  // projecting today's cap back over the analytics `days` array for days w/o snapshots.
   const cap = bt.grand_total_daily_cap;
-  const dailyVsCap = (days || []).slice(-30).map(d => ({
-    date: d.date, spend: d.spend || 0, cap, pct: cap > 0 ? (d.spend / cap * 100) : 0,
-    delta: d.spend - cap
-  })).reverse();
+  const snapsByDate = {};
+  (bt.history || []).forEach(h => { snapsByDate[h.date] = h; });
+  const dailyVsCap = (days || []).slice(-30).map(d => {
+    const snap = snapsByDate[d.date];
+    const realCap = snap ? snap.designated_cap : cap;
+    const realSpend = snap ? snap.actual_spend : (d.spend || 0);
+    return {
+      date: d.date,
+      spend: realSpend, cap: realCap,
+      pct: realCap > 0 ? (realSpend / realCap * 100) : 0,
+      delta: realSpend - realCap,
+      snapshot: !!snap
+    };
+  }).reverse();
 
   const $ = n => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   const pctColor = p => p < 70 ? 'var(--at3)' : p < 90 ? 'var(--gold)' : p < 110 ? 'var(--grn)' : '#d33';
