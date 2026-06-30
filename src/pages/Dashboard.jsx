@@ -362,110 +362,257 @@ function AdsTab({ ads }) {
 }
 
 // ═══ RECOMMENDATIONS TAB ═══
-function RecsTab({ ads, camps, tSpend, nDays }) {
+// ═══ CMO REPORT TAB — strategic recommendations, not just descriptive ═══
+// Replaces the old ad-by-ad scorer with an executive-grade report. Core rules:
+//   1. NEVER kill an ad that's still in learning phase (< 500 imps OR < 24hr life).
+//   2. Mature ads (> 2000 imps) get hard verdicts.
+//   3. Every recommendation includes the $ impact + specific reallocation move.
+//   4. Layered by urgency: Stop Now → Scale Now → Watch → Cook → Strategy.
+function RecsTab({ ads, camps, tSpend, nDays, totals }) {
   const tImps = ads.reduce((s, a) => s + a.impressions, 0);
   const tClicks = ads.reduce((s, a) => s + a.clicks, 0);
   const tAdSpend = ads.reduce((s, a) => s + a.spend, 0);
+  const tMsgs = totals?.tMsgs || ads.reduce((s, a) => s + (a.firstReply || 0), 0);
   const avgCTR = tImps > 0 ? tClicks / tImps * 100 : 0;
   const avgCPC = tClicks > 0 ? tAdSpend / tClicks : 0;
   const avgCPM = tImps > 0 ? tAdSpend / tImps * 1000 : 0;
+  const avgCPR = tMsgs > 0 ? tAdSpend / tMsgs : null;        // cost per reply (true conversion proxy)
   const dailyBudget = tSpend / nDays;
 
-  const scored = ads.filter(a => a.spend > 0).map(a => {
-    const ctrR = avgCTR > 0 ? a.ctr / avgCTR : 1;
-    const cpcR = avgCPC > 0 ? avgCPC / a.cpc : 1;
-    const cpmR = avgCPM > 0 ? avgCPM / a.cpm : 1;
-    const score = Math.round((ctrR * 40 + cpcR * 35 + cpmR * 25) / 3 * 100) / 100;
+  // ── Maturity classification — KEY rule: never kill ads still learning ──
+  // < 500 imps OR < $5 spent  = LEARNING (no verdict yet)
+  // 500-2000 imps             = EARLY (soft watch only)
+  // 2000+ imps                = MATURE (hard verdict OK)
+  const maturity = (a) => {
+    if (a.impressions < 500 || a.spend < 5) return 'LEARNING';
+    if (a.impressions < 2000) return 'EARLY';
+    return 'MATURE';
+  };
+
+  // ── Per-ad verdict (CMO logic) ──
+  const scored = ads.filter(a => a.spend > 0 || a.impressions > 100).map(a => {
+    const mat = maturity(a);
+    const cpr = (a.firstReply || 0) > 0 ? a.spend / a.firstReply : null;
     const dSpend = a.spend / nDays;
-    let tier, cls, actCls, reason, action;
 
-    if (a.spend < 15) {
-      if (a.ctr > avgCTR * 1.5 && a.cpc < avgCPC * 0.5) {
-        tier = 'scale'; cls = 'scale'; actCls = 'g';
-        reason = `Incredible early signals — ${pct(a.ctr)} CTR and ${$(a.cpc, 3)} CPC are the best ratios. Only ${$(a.spend)} spent, still in learning phase.`;
-        action = `Increase to $15-20/day. Give 7+ days to exit learning phase.`;
+    let bucket, action, reason, impact;
+
+    if (mat === 'LEARNING') {
+      bucket = 'cook';
+      action = 'LET IT COOK';
+      const need = Math.max(0, 500 - a.impressions);
+      reason = `Only ${fmt(a.impressions)} imps · $${a.spend.toFixed(2)} spent. Needs ~${fmt(need)} more imps before any verdict is reliable.`;
+      impact = `Hold for 24-72 hrs. Touching now wastes the learning data already collected.`;
+    } else if (mat === 'EARLY') {
+      // Soft watch verdicts only — never kill early
+      if (a.ctr > avgCTR * 2 && cpr != null && avgCPR != null && cpr < avgCPR * 0.7) {
+        bucket = 'scale-watch';
+        action = 'CONSIDER SCALE in 24hr';
+        reason = `Early signal is strong — CTR ${pct(a.ctr)} (${(a.ctr/avgCTR).toFixed(1)}× avg) and cost/reply $${cpr.toFixed(2)} (${(cpr/avgCPR).toFixed(1)}× avg).`;
+        impact = `If it holds for 1000 more imps → bump +15% (~$${(dSpend*0.15).toFixed(0)}/d more).`;
+      } else if (a.ctr < avgCTR * 0.4) {
+        bucket = 'watch';
+        action = 'WATCH 48HR';
+        reason = `CTR ${pct(a.ctr)} is ${(a.ctr/avgCTR).toFixed(1)}× avg but only ${fmt(a.impressions)} imps in. Could be variance.`;
+        impact = `If CTR stays < ${pct(avgCTR*0.5)} after 2000 imps → pause and reclaim $${dSpend.toFixed(0)}/d.`;
       } else {
-        tier = 'dead'; cls = 'dead'; actCls = 'x';
-        reason = `Negligible spend (${$(a.spend)}) with ${pct(a.ctr)} CTR. Not enough data.`;
-        action = `No action — too small to matter.`;
+        bucket = 'cook';
+        action = 'OBSERVE';
+        reason = `${fmt(a.impressions)} imps · ${pct(a.ctr)} CTR — normal range, needs more data.`;
+        impact = `Check back in 24 hrs.`;
       }
-    } else if (a.ctr > avgCTR * 1.4 && a.cpc < avgCPC * 0.6) {
-      tier = 'scale'; cls = 'scale'; actCls = 'g';
-      reason = `Top performer. ${pct(a.ctr)} CTR is ${ctrR.toFixed(1)}x account avg. Every dollar generates more clicks than average.`;
-      action = dSpend < dailyBudget * 0.3 ? `Increase daily budget by 50-100%. Underinvested relative to efficiency.` : `Good budget share. Maintain and watch for creative fatigue.`;
-    } else if (a.ctr > avgCTR * 1.1 && a.cpc < avgCPC * 0.8) {
-      tier = 'scale'; cls = 'scale'; actCls = 'g';
-      reason = `Above-average — ${pct(a.ctr)} CTR and ${$(a.cpc, 3)} CPC both beat benchmarks.`;
-      action = `Increase budget by 25-50%. Good scale candidate.`;
-    } else if (a.ctr > avgCTR * 0.7 && a.cpc < avgCPC * 1.3) {
-      tier = 'optimize'; cls = 'optimize'; actCls = 'o';
-      reason = `Middle of pack — ${pct(a.ctr)} CTR and ${$(a.cpc, 3)} CPC near averages. ${fmt(a.clicks)} clicks for ${$(a.spend)}.`;
-      action = `Reduce to $5/day. Shift budget to top performers.`;
-    } else if (a.ctr < avgCTR * 0.5 || a.cpc > avgCPC * 2) {
-      tier = 'cut'; cls = 'cut'; actCls = 'r';
-      const wp = tAdSpend > 0 ? (a.spend / tAdSpend * 100).toFixed(0) : 0;
-      reason = `Underperforming — ${pct(a.ctr)} CTR and ${$(a.cpc, 3)} CPC both below benchmarks. Consumed ${wp}% of budget with poor efficiency.`;
-      action = `Pause immediately. Redirect ${$(dSpend, 0)}/day to top performers.`;
     } else {
-      tier = 'cut'; cls = 'cut'; actCls = 'r';
-      reason = `Below average — ${pct(a.ctr)} CTR and ${$(a.cpc, 3)} CPC both worse than benchmarks.`;
-      action = `Reduce significantly or pause.`;
+      // MATURE — hard verdicts
+      if (cpr != null && avgCPR != null && cpr > avgCPR * 3 && a.firstReply < 5) {
+        bucket = 'stop';
+        action = 'STOP NOW';
+        reason = `Cost per reply $${cpr.toFixed(2)} is ${(cpr/avgCPR).toFixed(1)}× account avg ($${avgCPR.toFixed(2)}). Only ${a.firstReply} reply${a.firstReply===1?'':'ies'} after ${fmt(a.impressions)} imps.`;
+        impact = `Pause and reclaim $${dSpend.toFixed(0)}/d → reinvest into top scaler for +${((dSpend / avgCPR)).toFixed(0)} extra replies/day at current efficiency.`;
+      } else if (a.ctr < 0.5) {
+        bucket = 'stop';
+        action = 'STOP NOW';
+        reason = `CTR ${pct(a.ctr)} after ${fmt(a.impressions)} imps means creative is not stopping the scroll. ${a.firstReply || 0} replies / $${a.spend.toFixed(0)} spent.`;
+        impact = `Pause and reclaim $${dSpend.toFixed(0)}/d. Reload with a stronger hook.`;
+      } else if (a.frequency > 4) {
+        bucket = 'fatigue';
+        action = 'ROTATE CREATIVE';
+        reason = `Frequency ${a.frequency?.toFixed?.(1)} = audience seeing this ad 4+ times. Diminishing returns.`;
+        impact = `Swap creative within 48 hrs or CPM will inflate ~30% next week.`;
+      } else if (cpr != null && avgCPR != null && cpr < avgCPR * 0.6 && a.spend > 20) {
+        bucket = 'scale';
+        action = 'SCALE +25%';
+        reason = `Cost per reply $${cpr.toFixed(2)} is ${(avgCPR/cpr).toFixed(1)}× MORE efficient than account avg ($${avgCPR.toFixed(2)}). Generated ${a.firstReply} replies for $${a.spend.toFixed(0)}.`;
+        impact = `Bump daily +$${(dSpend*0.25).toFixed(0)} → projected +${(dSpend*0.25/cpr).toFixed(0)} more replies/day at this efficiency.`;
+      } else if (a.ctr > avgCTR * 1.5 && cpr != null && avgCPR != null && cpr < avgCPR) {
+        bucket = 'scale';
+        action = 'SCALE +15%';
+        reason = `CTR ${pct(a.ctr)} (${(a.ctr/avgCTR).toFixed(1)}× avg) and cost/reply $${cpr.toFixed(2)} both beating account avg.`;
+        impact = `Bump +$${(dSpend*0.15).toFixed(0)}/d. Don't go more than 25% per day or learning resets.`;
+      } else if (cpr != null && avgCPR != null && cpr > avgCPR * 1.5) {
+        bucket = 'reduce';
+        action = 'REDUCE 50%';
+        reason = `Cost per reply $${cpr.toFixed(2)} is ${(cpr/avgCPR).toFixed(1)}× avg. Spending too much for too few replies.`;
+        impact = `Halve daily to $${(dSpend*0.5).toFixed(0)}/d. Frees $${(dSpend*0.5).toFixed(0)}/d for winners.`;
+      } else {
+        bucket = 'keep';
+        action = 'KEEP';
+        reason = `Steady — CTR ${pct(a.ctr)}, cost/reply $${cpr?cpr.toFixed(2):'n/a'}. Performing within normal range.`;
+        impact = `No action. Reassess in 7 days.`;
+      }
     }
 
-    const camp = camps.find(c => c.id === a.campId);
-    const isPaused = camp && camp.status === 'PAUSED';
-    if (isPaused && (tier === 'scale' || tier === 'optimize')) {
-      tier = 'reactivate'; cls = 'reactivate'; actCls = 'b';
-      action = `Campaign paused but ad was performing. Reactivate at $15-20/day.`;
-    }
-
-    return { ...a, score, tier, cls, actCls, reason, action, dSpend, isPaused };
+    return { ...a, maturity: mat, cpr, dSpend, bucket, action, reason, impact };
   });
 
-  const tOrder = { scale: 0, reactivate: 1, optimize: 2, cut: 3, dead: 4 };
-  scored.sort((a, b) => tOrder[a.tier] - tOrder[b.tier] || b.score - a.score);
-  const groups = { scale: [], reactivate: [], optimize: [], cut: [], dead: [] };
-  scored.forEach(a => groups[a.tier].push(a));
-  const tLabels = { scale: 'Scale / increase budget', reactivate: 'Reactivate', optimize: 'Optimize / reduce', cut: 'Pause / cut', dead: 'Low priority' };
+  // ── Budget reallocation simulation ──
+  const stops = scored.filter(a => a.bucket === 'stop');
+  const scales = scored.filter(a => a.bucket === 'scale');
+  const reduces = scored.filter(a => a.bucket === 'reduce');
+  const reclaimedDaily = stops.reduce((s, a) => s + a.dSpend, 0) + reduces.reduce((s, a) => s + a.dSpend * 0.5, 0);
+  const scaleBoostDaily = scales.reduce((s, a) => s + a.dSpend * 0.25, 0);
+  const netDailyChange = scaleBoostDaily - reclaimedDaily;
+  const extraRepliesIfReallocated = scales.length > 0 && avgCPR
+    ? scales.reduce((s, a) => s + (a.dSpend * 0.25 / (a.cpr || avgCPR)), 0)
+    : 0;
+  const repliesLostFromStops = stops.reduce((s, a) => s + (a.firstReply / nDays || 0), 0);
+  const netRepliesPerDay = extraRepliesIfReallocated - repliesLostFromStops;
+
+  // ── Creative + audience insights (heuristics over the ad set / campaign data) ──
+  const byCamp = {};
+  scored.forEach(a => {
+    const k = a.campName || '?';
+    if (!byCamp[k]) byCamp[k] = { spend: 0, replies: 0, ctr: [], n: 0 };
+    byCamp[k].spend += a.spend;
+    byCamp[k].replies += a.firstReply || 0;
+    byCamp[k].ctr.push(a.ctr);
+    byCamp[k].n++;
+  });
+  const campRank = Object.entries(byCamp).map(([name, v]) => ({
+    name, spend: v.spend, replies: v.replies, ads: v.n,
+    cpr: v.replies > 0 ? v.spend / v.replies : null,
+    avgCtr: v.ctr.length > 0 ? v.ctr.reduce((s, x) => s + x, 0) / v.ctr.length : 0
+  })).sort((a, b) => (a.cpr || 999) - (b.cpr || 999));
+
+  // Group for rendering
+  const groups = [
+    { key: 'stop', label: '🛑 STOP NOW — wasted spend, mature ads', color: '#d33', items: stops },
+    { key: 'scale', label: '🚀 SCALE IMMEDIATELY — proven winners', color: 'var(--grn)', items: scales },
+    { key: 'fatigue', label: '😴 ROTATE CREATIVE — audience saturated', color: 'var(--gold)', items: scored.filter(a => a.bucket === 'fatigue') },
+    { key: 'reduce', label: '⬇ REDUCE — over-spending vs efficiency', color: '#d80', items: reduces },
+    { key: 'scale-watch', label: '⏳ WATCH FOR SCALE — early winners (24hr)', color: 'var(--gold)', items: scored.filter(a => a.bucket === 'scale-watch') },
+    { key: 'watch', label: '👀 WATCH FOR CUT — weak early signal (48hr)', color: 'var(--at2)', items: scored.filter(a => a.bucket === 'watch') },
+    { key: 'cook', label: '🎓 LET IT COOK — protect from premature action', color: 'var(--at2)', items: scored.filter(a => a.bucket === 'cook') },
+    { key: 'keep', label: '✓ KEEP RUNNING — steady', color: 'var(--at2)', items: scored.filter(a => a.bucket === 'keep') },
+  ];
 
   return (
-    <div className="sec">
-      <h2 className="sh">Ad-Level Recommendations</h2>
-      <p style={{ fontSize: '.84rem', color: 'var(--at2)', marginBottom: '1rem', lineHeight: 1.6 }}>
-        Each ad scored against benchmarks — CTR avg: {pct(avgCTR)}, CPC avg: {$(avgCPC, 3)}, CPM avg: {$(avgCPM)}
-      </p>
-      {Object.entries(groups).map(([tier, items]) => items.length > 0 && (
-        <div key={tier}>
-          <div className="sec-label">{tLabels[tier]} ({items.length})</div>
-          {items.map(a => (
-            <div className={`rec ${a.cls}`} key={a.id}>
+    <>
+      {/* ── Executive Summary ── */}
+      <div className="sec" style={{ background: 'linear-gradient(135deg, #1a1a2e, #0f1419)' }}>
+        <h2 className="sh" style={{ color: 'var(--gold)' }}>🎯 CMO Executive Report — last {nDays} days</h2>
+        <p style={{ fontSize: '.85rem', color: 'var(--at2)', marginBottom: '1rem' }}>
+          Strategic recommendations to maximize profit. New ads are protected from premature kill decisions.
+        </p>
+        <div className="kr">
+          <div className="k"><div className="l">Total Spend</div><div className="v">{$(tAdSpend)}</div><div className="s">{nDays}d window</div></div>
+          <div className="k"><div className="l">Total Replies</div><div className="v">{fmt(tMsgs)}</div><div className="s">conversation starts</div></div>
+          <div className="k"><div className="l">Cost / Reply</div><div className="v" style={{ color: avgCPR && avgCPR < 2 ? 'var(--grn)' : avgCPR && avgCPR < 5 ? 'var(--gold)' : '#d33' }}>{avgCPR ? '$'+avgCPR.toFixed(2) : '—'}</div><div className="s">account avg</div></div>
+          <div className="k"><div className="l">Avg CTR</div><div className="v">{pct(avgCTR)}</div><div className="s">benchmark</div></div>
+          <div className="k"><div className="l">Daily Burn</div><div className="v">{$(dailyBudget,0)}</div><div className="s">/day current</div></div>
+        </div>
+
+        {(stops.length > 0 || scales.length > 0) && (
+          <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: 'var(--gold)', background: '#1a1a1a' }}>
+            <b style={{ color: 'var(--gold)' }}>💼 Headline Recommendation</b>
+            <p style={{ margin: '.5rem 0 0', fontSize: '.85rem', lineHeight: 1.5 }}>
+              Pause <b>{stops.length}</b> mature loser{stops.length===1?'':'s'} (reclaims <b>{$(reclaimedDaily, 0)}/day</b>) and bump budget on <b>{scales.length}</b> winner{scales.length===1?'':'s'} (+{$(scaleBoostDaily, 0)}/d).
+              Net daily spend change: <b style={{ color: netDailyChange < 0 ? 'var(--grn)' : '#d80' }}>{netDailyChange < 0 ? '' : '+'}{$(netDailyChange, 0)}/day</b>.
+              Projected impact: <b style={{ color: 'var(--grn)' }}>+{netRepliesPerDay.toFixed(0)} extra replies/day</b> at current efficiency.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* ── Bucketed recommendations ── */}
+      {groups.map(g => g.items.length === 0 ? null : (
+        <div className="sec" key={g.key}>
+          <h2 className="sh" style={{ color: g.color }}>{g.label} ({g.items.length})</h2>
+          {g.items.map(a => (
+            <div className={`rec`} style={{ borderLeft: `4px solid ${g.color}`, padding: '.75rem', marginBottom: '.6rem', background: '#1a1a1a', borderRadius: 4 }} key={a.id}>
               <div className="rec-top">
                 <div>
-                  <div className="rec-name">{a.name}</div>
-                  <div className="rec-camp">{a.campName} {a.isPaused && <span className="tag pau" style={{ marginLeft: 6 }}>paused</span>}</div>
+                  <div className="rec-name" style={{ fontSize: '.95rem' }}>{a.name}</div>
+                  <div className="rec-camp" style={{ fontSize: '.72rem', color: 'var(--at2)' }}>{a.campName}</div>
                 </div>
-                <span className={`tag ${a.tier === 'scale' || a.tier === 'reactivate' ? 'inc' : a.tier === 'optimize' ? 'pau' : 'dec'}`}>
-                  {a.tier === 'scale' ? 'Scale' : a.tier === 'reactivate' ? 'Reactivate' : a.tier === 'optimize' ? 'Optimize' : a.tier === 'cut' ? 'Pause' : 'Low priority'}
-                </span>
+                <span style={{ background: g.color, color: '#fff', padding: '3px 10px', borderRadius: 3, fontSize: '.72rem', fontWeight: 700 }}>{a.action}</span>
               </div>
-              <div className="rec-stats">
+              <div className="rec-stats" style={{ fontSize: '.74rem', color: 'var(--at2)', marginTop: '.4rem' }}>
                 <span>Spend: <b>{$(a.spend, 0)}</b></span>
-                <span>CTR: <b>{pct(a.ctr)}</b></span>
-                <span>CPC: <b>{$(a.cpc, 3)}</b></span>
-                <span>CPM: <b>{$(a.cpm)}</b></span>
-                <span>Clicks: <b>{fmt(a.clicks)}</b></span>
-                <span>~{$(a.dSpend, 0)}/day</span>
+                <span style={{ marginLeft: 12 }}>Imp: <b>{fmt(a.impressions)}</b></span>
+                <span style={{ marginLeft: 12 }}>CTR: <b>{pct(a.ctr)}</b></span>
+                <span style={{ marginLeft: 12 }}>Replies: <b>{a.firstReply || 0}</b></span>
+                <span style={{ marginLeft: 12 }}>$/Reply: <b>{a.cpr ? '$'+a.cpr.toFixed(2) : '—'}</b></span>
+                <span style={{ marginLeft: 12 }}>Daily: <b>{$(a.dSpend, 0)}</b></span>
+                <span style={{ marginLeft: 12, background: a.maturity==='MATURE'?'var(--grn)':a.maturity==='EARLY'?'var(--gold)':'var(--at3)', color:'#000', padding:'1px 5px', borderRadius:3, fontSize:'.65rem' }}>{a.maturity}</span>
               </div>
-              <div className="rec-why">{a.reason}</div>
-              <div className={`rec-action ${a.actCls}`}>{a.action}</div>
-              <div className="rec-score">Efficiency score: {a.score}/100</div>
+              <div style={{ fontSize: '.78rem', color: 'var(--at)', marginTop: '.5rem', lineHeight: 1.4 }}>{a.reason}</div>
+              <div style={{ fontSize: '.78rem', color: g.color, marginTop: '.3rem', fontWeight: 600 }}>→ {a.impact}</div>
             </div>
           ))}
         </div>
       ))}
-    </div>
+
+      {/* ── Campaign-level insights ── */}
+      <div className="sec">
+        <h2 className="sh">📂 Campaign Efficiency Ranking</h2>
+        <p style={{ fontSize: '.78rem', color: 'var(--at2)', marginBottom: '.5rem' }}>Where every dollar generates the most replies. Top of list = put more budget here.</p>
+        <div className="tw">
+          <table>
+            <thead><tr><th>Rank</th><th>Campaign</th><th className="r">Spend</th><th className="r">Replies</th><th className="r">$/Reply</th><th className="r">Avg CTR</th><th>CMO Verdict</th></tr></thead>
+            <tbody>
+              {campRank.map((c, i) => {
+                const isWinner = i === 0 && c.cpr != null;
+                const isLoser = i === campRank.length - 1 && c.cpr != null && campRank.length > 1 && c.cpr > (campRank[0].cpr || 0) * 2;
+                return (
+                  <tr key={c.name}>
+                    <td style={{ fontWeight: 700, color: isWinner ? 'var(--grn)' : isLoser ? '#d33' : 'var(--at2)' }}>#{i+1}</td>
+                    <td style={{ fontWeight: 600 }}>{c.name?.slice(0, 40)}</td>
+                    <td className="r">{$(c.spend, 0)}</td>
+                    <td className="r">{fmt(c.replies)}</td>
+                    <td className="r" style={{ color: c.cpr && c.cpr < (avgCPR || 99) ? 'var(--grn)' : '#d33', fontWeight: 700 }}>{c.cpr ? '$'+c.cpr.toFixed(2) : '—'}</td>
+                    <td className="r">{pct(c.avgCtr)}</td>
+                    <td style={{ fontSize: '.74rem' }}>
+                      {isWinner ? <span style={{ color: 'var(--grn)' }}>🏆 Shift budget here</span> :
+                       isLoser ? <span style={{ color: '#d33' }}>⚠ Reduce or restructure</span> :
+                       <span style={{ color: 'var(--at2)' }}>Maintain</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Strategic action checklist ── */}
+      <div className="sec" style={{ background: '#1a1a2e' }}>
+        <h2 className="sh" style={{ color: 'var(--gold)' }}>📋 Action Checklist — do these NOW in Ads Manager</h2>
+        <ol style={{ fontSize: '.88rem', lineHeight: 1.7, paddingLeft: '1.2rem', color: 'var(--at)' }}>
+          {stops.length > 0 && <li><b>Pause {stops.length} ad{stops.length===1?'':'s'}:</b> {stops.slice(0,3).map(a => a.name).join(', ')}{stops.length>3 ? ` + ${stops.length-3} more` : ''}. <b style={{color:'var(--grn)'}}>Frees {$(reclaimedDaily, 0)}/day.</b></li>}
+          {scales.length > 0 && <li><b>Bump budget +25% on {scales.length} ad{scales.length===1?'':'s'}:</b> {scales.slice(0,3).map(a => a.name).join(', ')}{scales.length>3 ? ` + ${scales.length-3} more` : ''}. <b style={{color:'var(--grn)'}}>Projected +{netRepliesPerDay.toFixed(0)} replies/day.</b></li>}
+          {scored.filter(a => a.bucket === 'fatigue').length > 0 && <li><b>Rotate creative on {scored.filter(a => a.bucket === 'fatigue').length} ad{scored.filter(a => a.bucket === 'fatigue').length===1?'':'s'}</b> — frequency too high. Replace IG post within 48 hrs.</li>}
+          {scored.filter(a => a.bucket === 'cook').length > 0 && <li><b>DO NOT TOUCH {scored.filter(a => a.bucket === 'cook').length} learning-phase ad{scored.filter(a => a.bucket === 'cook').length===1?'':'s'}</b> — let them collect signal. Touching now wastes data.</li>}
+          {scored.filter(a => a.bucket === 'scale-watch').length > 0 && <li><b>Set 24-hour calendar reminder</b> to recheck {scored.filter(a => a.bucket === 'scale-watch').length} early-winner ad{scored.filter(a => a.bucket === 'scale-watch').length===1?'':'s'} — scale them then if signal holds.</li>}
+          {campRank.length > 1 && campRank[0].cpr && <li><b>Strategic shift:</b> "{campRank[0].name?.slice(0,40)}" is your top campaign (${campRank[0].cpr.toFixed(2)}/reply). Next budget increase goes here.</li>}
+        </ol>
+        <p style={{ fontSize: '.7rem', color: 'var(--at3)', marginTop: '1rem', fontStyle: 'italic' }}>
+          Don't violate the 25%/day budget-increase rule — bigger jumps reset Meta's learning phase. Make moves slow.
+        </p>
+      </div>
+    </>
   );
 }
+
 
 // ═══ TRACKER TAB ═══
 function BudgetSection({ days, ads }) {
@@ -2491,7 +2638,7 @@ export default function Dashboard() {
           {tab === 'georoi' && <GeoROITab />}
           {tab === 'schedule' && <ScheduleTab hourRich={data.hourRich} />}
           {tab === 'depth' && <DepthTab ads={ads} />}
-          {tab === 'recs' && <RecsTab ads={ads} camps={camps} tSpend={tSpend} nDays={nDays} />}
+          {tab === 'recs' && <RecsTab ads={ads} camps={camps} tSpend={tSpend} nDays={nDays} totals={totals} />}
           {tab === 'tracker' && <TrackerTab ads={ads} tSpend={tSpend} tMsgs={tMsgs} bCTR={bCTR} bCPM={bCPM} tReach={tReach} nDays={nDays} days={days} />}
           {tab === 'daily' && <DailyTab days={days} />}
           {tab === 'ads' && <AdsTab ads={ads} />}
