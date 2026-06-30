@@ -446,7 +446,7 @@ function ActionButtons({ ad, bucket }) {
 //   2. Mature ads (> 2000 imps) get hard verdicts.
 //   3. Every recommendation includes the $ impact + specific reallocation move.
 //   4. Layered by urgency: Stop Now → Scale Now → Watch → Cook → Strategy.
-function RecsTab({ ads, camps, tSpend, nDays, totals }) {
+export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals = {} }) {
   const tImps = ads.reduce((s, a) => s + a.impressions, 0);
   const tClicks = ads.reduce((s, a) => s + a.clicks, 0);
   const tAdSpend = ads.reduce((s, a) => s + a.spend, 0);
@@ -1460,7 +1460,7 @@ function AdOptimizerTab() {
   );
 }
 
-function TikTokTab() {
+export function TikTokTab() {
   const [data, setData] = useState(null);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);

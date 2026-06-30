@@ -10,6 +10,7 @@ import Alerts from './pages/Alerts';
 import BulkCreate from './pages/BulkCreate';
 import DailyReport from './pages/DailyReport';
 import MediaLibrary from './pages/MediaLibrary';
+import TikTokPage from './pages/TikTok';
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/leads" element={<Leads />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/tiktok" element={<TikTokPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

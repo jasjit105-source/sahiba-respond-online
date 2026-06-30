@@ -1,18 +1,22 @@
 import { NavLink } from 'react-router-dom';
 
 const NAV = [
-  { to: '/', label: 'Dashboard', icon: '\u{1F4CA}' },
+  // ─ Primary daily-use ─
+  { to: '/', label: 'Today', icon: '\u{1F305}' },                      // sunrise — your 8am ritual
+  { to: '/daily-report', label: 'CMO Report', icon: '\u{1F9E0}' },     // strategic recs (renamed from "AI Report")
+  { to: '/tiktok', label: 'TikTok', icon: '\u{1F3B5}' },               // separate platform — own page
+  // ─ Management ─
   { to: '/campaigns', label: 'Campaigns', icon: '\u{1F3AF}' },
-  { to: '/media', label: 'Media Library', icon: '\u{1F4F7}' },
-  { to: '/bulk-create', label: 'Create Ads', icon: '\u{1F680}' },
-  { to: '/daily-report', label: 'AI Report', icon: '\u{1F9E0}' },
   { to: '/adsets', label: 'Ad Sets', icon: '\u{1F465}' },
   { to: '/ads', label: 'Ads', icon: '\u{1F4F1}' },
+  // ─ Operations ─
   { to: '/leads', label: 'Leads', icon: '\u{1F4CB}' },
   { to: '/agents', label: 'Agents', icon: '\u{1F9D1}' },
   { to: '/alerts', label: 'Alerts', icon: '\u{1F514}' },
+  // ─ Tooling ─
+  { to: '/bulk-create', label: 'Create Ads', icon: '\u{1F680}' },
+  { to: '/media', label: 'Media Library', icon: '\u{1F4F7}' },
   // External: standalone Respond Tracker page (vanilla HTML in /public/respond.html).
-  // Renders as a normal <a> in the sidebar. Agents bookmark /respond?v=nancy directly.
   { to: '/respond', label: 'Respond Tracker', icon: '\u{1F4AC}', external: true },
 ];
 
