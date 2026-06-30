@@ -2100,6 +2100,111 @@ app.get('/api/geo-roi', async (req, res) => {
   }
 });
 
+// ─── Budget Tracker — daily caps per ad set / campaign / account + spend vs cap ───
+// Pulls current daily_budget from every ACTIVE ad set across all tracked accounts,
+// groups by campaign + account, and merges with /api/analytics daily spend data so
+// the Performance Tracker tab can show "designated cap vs actual spend" by date.
+//
+// Caveat: Meta's API only exposes the CURRENT daily_budget — there's no budget-change
+// history. Historical "designated" line is the current cap projected back. For accurate
+// history going forward, the daily_health snapshot job logs nightly to db/daily-reports/.
+app.get('/api/budget-tracker', async (req, res) => {
+  try {
+    const ACCOUNTS = [
+      { id: AD_ACCOUNT_ID, name: 'SAHIBA2026', legacy: true },   // winding down
+      { id: 'act_1622779349328736', name: 'Sahiba-MX', legacy: false }, // primary going forward
+    ];
+
+    // Pull ad sets + campaigns for both accounts in parallel
+    const allAdsets = [];
+    const campaignsById = {};
+    for (const acct of ACCOUNTS) {
+      const [adsetsRaw, campsRaw] = await Promise.all([
+        mcpCall('get_adsets', { account_id: acct.id }),
+        mcpCall('get_campaigns', { account_id: acct.id })
+      ]);
+      const camps = extractText(campsRaw)?.data || [];
+      camps.forEach(c => { campaignsById[c.id] = { ...c, _account: acct.name, _legacy: acct.legacy }; });
+      const sets = extractText(adsetsRaw)?.data || [];
+      const active = sets.filter(s => s.status === 'ACTIVE' || s.effective_status === 'ACTIVE');
+      active.forEach(s => {
+        const camp = campaignsById[s.campaign_id] || {};
+        const dailyB = parseFloat(s.daily_budget || 0) / 100;
+        const camp_daily = parseFloat(camp.daily_budget || 0) / 100;
+        allAdsets.push({
+          account: acct.name,
+          account_id: acct.id,
+          account_legacy: acct.legacy,
+          campaign_id: s.campaign_id,
+          campaign_name: camp.campaign_name || camp.name || '?',
+          campaign_objective: camp.objective,
+          campaign_status: camp.status,
+          campaign_daily_budget: camp_daily,  // > 0 means CBO
+          adset_id: s.id,
+          adset_name: s.name,
+          adset_status: s.status,
+          daily_budget: dailyB,
+          lifetime_budget: parseFloat(s.lifetime_budget || 0) / 100,
+          optimization_goal: s.optimization_goal,
+          end_time: s.end_time || null
+        });
+      });
+    }
+
+    // Group by campaign (sum of ad-set budgets, or use campaign-level CBO)
+    const byCampaign = {};
+    for (const s of allAdsets) {
+      const key = s.campaign_id;
+      if (!byCampaign[key]) {
+        byCampaign[key] = {
+          campaign_id: s.campaign_id,
+          campaign_name: s.campaign_name,
+          account: s.account,
+          account_legacy: s.account_legacy,
+          objective: s.campaign_objective,
+          campaign_status: s.campaign_status,
+          mode: s.campaign_daily_budget > 0 ? 'CBO' : 'ABO',
+          campaign_daily_cap: s.campaign_daily_budget,
+          adset_daily_sum: 0,
+          adsets: []
+        };
+      }
+      byCampaign[key].adset_daily_sum += s.daily_budget;
+      byCampaign[key].adsets.push({
+        adset_id: s.adset_id, name: s.adset_name, status: s.adset_status,
+        daily_budget: s.daily_budget, lifetime_budget: s.lifetime_budget,
+        optimization_goal: s.optimization_goal, end_time: s.end_time
+      });
+    }
+    const campaignsList = Object.values(byCampaign).map(c => ({
+      ...c,
+      effective_daily_cap: c.mode === 'CBO' ? c.campaign_daily_cap : c.adset_daily_sum
+    }));
+
+    // Group by account
+    const byAccount = {};
+    for (const c of campaignsList) {
+      if (!byAccount[c.account]) byAccount[c.account] = { account: c.account, legacy: c.account_legacy, total_daily_cap: 0, campaigns: 0, active_adsets: 0 };
+      byAccount[c.account].total_daily_cap += c.effective_daily_cap;
+      byAccount[c.account].campaigns += 1;
+      byAccount[c.account].active_adsets += c.adsets.length;
+    }
+
+    const grandTotalDailyCap = Object.values(byAccount).reduce((s, a) => s + a.total_daily_cap, 0);
+
+    res.json({
+      ok: true,
+      as_of: new Date().toISOString(),
+      grand_total_daily_cap: grandTotalDailyCap,
+      by_account: Object.values(byAccount),
+      campaigns: campaignsList.sort((a, b) => b.effective_daily_cap - a.effective_daily_cap),
+      adsets: allAdsets.sort((a, b) => b.daily_budget - a.daily_budget)
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── Ad Optimizer — per-ad performance with win/lose/scale/pause flags ───
 // Reads Meta insights for every ACTIVE ad over the last N days and classifies each
 // against MX-market thresholds. User reviews the recommendations and acts manually

@@ -468,7 +468,99 @@ function RecsTab({ ads, camps, tSpend, nDays }) {
 }
 
 // ═══ TRACKER TAB ═══
-function TrackerTab({ ads, tSpend, tMsgs, bCTR, bCPM, tReach, nDays }) {
+function BudgetSection({ days, ads }) {
+  const [bt, setBt] = useState(null);
+  useEffect(() => { api.getBudgetTracker().then(setBt).catch(e => setBt({ ok: false, error: e.message })); }, []);
+  if (!bt) return <div className="sec"><h2 className="sh">💰 Daily Budget Tracker</h2><div className="ld"><div className="sp"></div><p>Loading budget caps…</p></div></div>;
+  if (!bt.ok) return <div className="sec"><h2 className="sh">💰 Daily Budget Tracker</h2><div className="err">Error: {bt.error}</div></div>;
+
+  // Build daily-spend-vs-cap from the existing `days` array (passed in from analytics)
+  const cap = bt.grand_total_daily_cap;
+  const dailyVsCap = (days || []).slice(-30).map(d => ({
+    date: d.date, spend: d.spend || 0, cap, pct: cap > 0 ? (d.spend / cap * 100) : 0,
+    delta: d.spend - cap
+  })).reverse();
+
+  const $ = n => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const pctColor = p => p < 70 ? 'var(--at3)' : p < 90 ? 'var(--gold)' : p < 110 ? 'var(--grn)' : '#d33';
+
+  return (
+    <>
+      <div className="sec">
+        <h2 className="sh">💰 Daily Budget Tracker</h2>
+        <p style={{ fontSize: '.78rem', color: 'var(--at2)', marginBottom: '.75rem' }}>
+          Designated daily cap across all active ad sets. Compared to actual daily spend below. Sahiba-MX is your primary going forward — SAHIBA2026 shown in muted (winding down).
+        </p>
+
+        <div className="kr">
+          <div className="k">
+            <div className="l">Total Daily Cap</div>
+            <div className="v">{$(bt.grand_total_daily_cap)}</div>
+            <div className="s">per day across all ad sets</div>
+          </div>
+          {bt.by_account.map(a => (
+            <div key={a.account} className="k" style={{ opacity: a.legacy ? 0.55 : 1 }}>
+              <div className="l">{a.account}{a.legacy ? ' (legacy)' : ''}</div>
+              <div className="v">{$(a.total_daily_cap)}</div>
+              <div className="s">{a.active_adsets} ad sets · {a.campaigns} campaigns</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="sec">
+        <h2 className="sh">📂 By Campaign</h2>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr><th>Acct</th><th>Campaign</th><th>Mode</th><th className="r">Daily Cap</th><th>Ad Sets</th></tr>
+            </thead>
+            <tbody>
+              {bt.campaigns.map(c => (
+                <tr key={c.campaign_id} style={{ opacity: c.account_legacy ? 0.6 : 1 }}>
+                  <td style={{ fontSize: '.7rem', fontWeight: 600, color: c.account === 'Sahiba-MX' ? 'var(--gold)' : 'var(--at2)' }}>{c.account}</td>
+                  <td style={{ fontWeight: 600 }}>{c.campaign_name}</td>
+                  <td><span style={{ background: c.mode === 'CBO' ? 'var(--gold)' : '#444', color: '#fff', padding: '1px 6px', borderRadius: 3, fontSize: '.65rem', fontWeight: 700 }}>{c.mode}</span></td>
+                  <td className="r" style={{ fontWeight: 700 }}>{$(c.effective_daily_cap)}/d</td>
+                  <td style={{ fontSize: '.72rem' }}>
+                    {c.adsets.map(s => <div key={s.adset_id}>{s.name} — {$(s.daily_budget || 0)}/d</div>)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="sec">
+        <h2 className="sh">📅 Daily Spend vs Designated Cap (last 30 days)</h2>
+        <p style={{ fontSize: '.72rem', color: 'var(--at3)', marginBottom: '.5rem' }}>
+          Caveat: Meta only exposes the CURRENT daily cap. Historical cap line = today's cap projected back. Going forward this becomes accurate as we log nightly snapshots.
+        </p>
+        <div className="tw">
+          <table>
+            <thead>
+              <tr><th>Date</th><th className="r">Designated Cap</th><th className="r">Actual Spend</th><th className="r">Δ</th><th className="r">% Used</th></tr>
+            </thead>
+            <tbody>
+              {dailyVsCap.map(d => (
+                <tr key={d.date}>
+                  <td>{d.date}</td>
+                  <td className="r" style={{ color: 'var(--at2)' }}>{$(d.cap)}</td>
+                  <td className="r" style={{ fontWeight: 600 }}>{$(d.spend)}</td>
+                  <td className="r" style={{ color: d.delta > 0 ? '#d33' : 'var(--grn)' }}>{d.delta > 0 ? '+' : ''}{$(d.delta)}</td>
+                  <td className="r" style={{ color: pctColor(d.pct), fontWeight: 700 }}>{d.pct.toFixed(0)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function TrackerTab({ ads, tSpend, tMsgs, bCTR, bCPM, tReach, nDays, days }) {
   const STORAGE_KEY = 'sahiba_snapshots';
   const [snaps, setSnaps] = useState(() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } });
   const [compareIdx, setCompareIdx] = useState(0);
@@ -512,6 +604,8 @@ function TrackerTab({ ads, tSpend, tMsgs, bCTR, bCPM, tReach, nDays }) {
   const baseline = snaps.length > 0 ? snaps[compareIdx] : null;
 
   return (
+    <>
+    <BudgetSection days={days} ads={ads} />
     <div className="sec">
       <h2 className="sh">Performance Tracker</h2>
       <div className="tracker-hdr">
@@ -572,6 +666,7 @@ function TrackerTab({ ads, tSpend, tMsgs, bCTR, bCPM, tReach, nDays }) {
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -2386,7 +2481,7 @@ export default function Dashboard() {
           {tab === 'schedule' && <ScheduleTab hourRich={data.hourRich} />}
           {tab === 'depth' && <DepthTab ads={ads} />}
           {tab === 'recs' && <RecsTab ads={ads} camps={camps} tSpend={tSpend} nDays={nDays} />}
-          {tab === 'tracker' && <TrackerTab ads={ads} tSpend={tSpend} tMsgs={tMsgs} bCTR={bCTR} bCPM={bCPM} tReach={tReach} nDays={nDays} />}
+          {tab === 'tracker' && <TrackerTab ads={ads} tSpend={tSpend} tMsgs={tMsgs} bCTR={bCTR} bCPM={bCPM} tReach={tReach} nDays={nDays} days={days} />}
           {tab === 'daily' && <DailyTab days={days} />}
           {tab === 'ads' && <AdsTab ads={ads} />}
           {tab === 'dow' && <DOWTab dowS={dowS} />}
