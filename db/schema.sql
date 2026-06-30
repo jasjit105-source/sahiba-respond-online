@@ -1,5 +1,24 @@
 -- Sahiba CRM Database Schema
 
+-- Action log — every time the user marks a CMO recommendation as actioned (or
+-- explicitly ignored / done-differently). Lets the CMO Report close the loop:
+-- next morning's report can reference yesterday's actions and their results.
+CREATE TABLE IF NOT EXISTS recommendation_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  taken_at TEXT DEFAULT (datetime('now')),    -- ISO timestamp
+  ad_id TEXT,                                 -- Meta ad id (nullable for campaign-level actions)
+  ad_name TEXT,                               -- snapshotted display name
+  campaign_name TEXT,
+  rec_bucket TEXT NOT NULL,                   -- 'stop'|'scale'|'fatigue'|'reduce'|'scale-watch'|'watch'|'cook'|'keep'
+  rec_action TEXT NOT NULL,                   -- 'STOP NOW' | 'SCALE +25%' etc — the exact label shown
+  user_choice TEXT NOT NULL,                  -- 'actioned'|'ignored'|'different'
+  before_daily_budget REAL,                   -- snapshot of cap at click time
+  before_cpr REAL,                            -- snapshot of $/reply at click time
+  note TEXT                                   -- user-provided context
+);
+CREATE INDEX IF NOT EXISTS idx_recaction_taken ON recommendation_actions(taken_at);
+CREATE INDEX IF NOT EXISTS idx_recaction_ad    ON recommendation_actions(ad_id);
+
 -- Nightly snapshot of each active ad set's daily budget cap + actual day spend.
 -- Powers the Budget Tracker's historical "designated vs actual" chart with real
 -- data instead of projecting today's cap backwards.

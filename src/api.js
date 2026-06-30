@@ -28,6 +28,8 @@ export const api = {
   getTiktokSummary: (days) => request('GET', `/tiktok-summary?days=${days || 30}`),
   getAdOptimizer: (days) => request('GET', `/ad-optimizer?days=${days || 7}`),
   getBudgetTracker: () => request('GET', '/budget-tracker'),
+  logRecAction: (data) => request('POST', '/rec-action', data),
+  getRecActions: (days, adId) => request('GET', `/rec-actions?days=${days || 14}${adId ? '&ad_id=' + adId : ''}`),
   getMetaCampaigns: () => request('GET', '/meta-campaigns'),
   promoteIgPost: (data) => request('POST', '/promote-ig-post', data),
   getSettings: () => request('GET', '/settings'),

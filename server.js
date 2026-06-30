@@ -2100,6 +2100,37 @@ app.get('/api/geo-roi', async (req, res) => {
   }
 });
 
+// ─── CMO Recommendation Action Log ───
+// User clicks "✓ Actioned" / "✗ Ignored" / "≠ Different" on a CMO recommendation;
+// we log it so next-morning report can close the loop ("yesterday you scaled X, here's
+// the 24hr result"). All fields optional except rec_bucket + rec_action + user_choice.
+app.post('/api/rec-action', (req, res) => {
+  try {
+    const { ad_id, ad_name, campaign_name, rec_bucket, rec_action, user_choice, before_daily_budget, before_cpr, note } = req.body;
+    if (!rec_bucket || !rec_action || !user_choice) return res.status(400).json({ ok: false, error: 'rec_bucket + rec_action + user_choice required' });
+    run(`INSERT INTO recommendation_actions
+         (ad_id, ad_name, campaign_name, rec_bucket, rec_action, user_choice, before_daily_budget, before_cpr, note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [ad_id || null, ad_name || null, campaign_name || null, rec_bucket, rec_action, user_choice,
+       before_daily_budget != null ? before_daily_budget : null, before_cpr != null ? before_cpr : null, note || null]);
+    res.json({ ok: true, logged_at: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Read recent actions (default last 14 days, optionally filter by ad_id)
+app.get('/api/rec-actions', (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 14;
+    const ad = req.query.ad_id;
+    const rows = ad
+      ? all(`SELECT * FROM recommendation_actions WHERE ad_id = ? AND taken_at >= datetime('now', '-' || ? || ' days') ORDER BY taken_at DESC`, [ad, days])
+      : all(`SELECT * FROM recommendation_actions WHERE taken_at >= datetime('now', '-' || ? || ' days') ORDER BY taken_at DESC LIMIT 200`, [days]);
+    res.json({ ok: true, count: rows.length, actions: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // ─── Budget Snapshot Job — nightly capture of per-adset cap + actual spend ───
 // Runs at 23:55 Mexico City local time (UTC-6, so 05:55 UTC next day). Persists to
 // budget_snapshots table so the historical "designated cap vs actual spend" line

@@ -362,6 +362,84 @@ function AdsTab({ ads }) {
 }
 
 // ═══ RECOMMENDATIONS TAB ═══
+// ═══ ActionButtons — log every CMO recommendation outcome ═══
+// Three states: ✓ Actioned (followed the advice) · ✗ Ignored (skipped) ·
+// ≠ Different (did something else). Persists to /api/rec-action which lets
+// tomorrow's CMO report close the loop ("yesterday you did X, here's result").
+function ActionButtons({ ad, bucket }) {
+  const [logged, setLogged] = useState(null);     // null | 'actioned' | 'ignored' | 'different'
+  const [noting, setNoting] = useState(false);
+  const [note, setNote] = useState('');
+  const [pending, setPending] = useState(false);
+
+  const log = async (choice) => {
+    if (logged) return;        // already recorded, no re-log
+    setPending(true);
+    try {
+      await api.logRecAction({
+        ad_id: ad.id, ad_name: ad.name, campaign_name: ad.campName,
+        rec_bucket: bucket, rec_action: ad.action,
+        user_choice: choice,
+        before_daily_budget: ad.dSpend, before_cpr: ad.cpr,
+        note: note || null
+      });
+      setLogged(choice);
+      setNoting(false);
+    } catch (e) { alert('Log failed: ' + e.message); }
+    finally { setPending(false); }
+  };
+
+  const btn = (kind, label, choice, color) => (
+    <button
+      onClick={() => choice === 'different' ? setNoting(true) : log(choice)}
+      disabled={!!logged || pending}
+      style={{
+        background: logged === choice ? color : 'transparent',
+        color: logged === choice ? '#fff' : color,
+        border: `1px solid ${color}`,
+        padding: '4px 10px', borderRadius: 4, fontSize: '.7rem', fontWeight: 600,
+        cursor: logged ? 'default' : 'pointer', marginRight: 6,
+        opacity: logged && logged !== choice ? 0.3 : 1
+      }}
+    >{label}</button>
+  );
+
+  if (logged && !noting) return (
+    <div style={{ marginTop: '.5rem', fontSize: '.7rem', color: 'var(--at2)' }}>
+      ✓ Logged as <b>{logged.toUpperCase()}</b> · CMO will track result tomorrow
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: '.6rem', paddingTop: '.5rem', borderTop: '1px solid #2a2a2a' }}>
+      {noting ? (
+        <div>
+          <input
+            type="text" value={note} onChange={e => setNote(e.target.value)} autoFocus
+            placeholder="What did you do instead? (e.g., bumped 50% not 25%)"
+            style={{ width: '70%', padding: '4px 8px', fontSize: '.75rem', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', borderRadius: 4, marginRight: 8 }}
+          />
+          <button onClick={() => log('different')} disabled={pending}
+            style={{ background: 'var(--gold)', color: '#000', padding: '4px 10px', borderRadius: 4, fontSize: '.7rem', fontWeight: 600 }}>
+            Save
+          </button>
+          <button onClick={() => { setNoting(false); setNote(''); }}
+            style={{ background: 'transparent', color: 'var(--at2)', padding: '4px 10px', fontSize: '.7rem', marginLeft: 4 }}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <>
+          {btn('actioned', '✓ Actioned', 'actioned', 'var(--grn)')}
+          {btn('ignored', '✗ Ignored', 'ignored', 'var(--at2)')}
+          {btn('different', '≠ Did Different', 'different', 'var(--gold)')}
+          <span style={{ fontSize: '.66rem', color: 'var(--at3)', marginLeft: 8 }}>Log what you did → next report tracks the result</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ═══ CMO REPORT TAB — strategic recommendations, not just descriptive ═══
 // Replaces the old ad-by-ad scorer with an executive-grade report. Core rules:
 //   1. NEVER kill an ad that's still in learning phase (< 500 imps OR < 24hr life).
@@ -557,6 +635,7 @@ function RecsTab({ ads, camps, tSpend, nDays, totals }) {
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--at)', marginTop: '.5rem', lineHeight: 1.4 }}>{a.reason}</div>
               <div style={{ fontSize: '.78rem', color: g.color, marginTop: '.3rem', fontWeight: 600 }}>→ {a.impact}</div>
+              <ActionButtons ad={a} bucket={g.key} />
             </div>
           ))}
         </div>
