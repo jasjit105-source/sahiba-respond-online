@@ -467,11 +467,22 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
     return 'MATURE';
   };
 
+  // ── ABO reality: budget lives at the AD SET, not the ad. Count sibling ads per
+  // ad set so we can tell the user the RIGHT action: PAUSE this ad (siblings absorb
+  // spend, ad-set total unchanged) vs REDUCE AD SET BUDGET (whole set gets cut).
+  const siblingsByAdset = {};
+  ads.forEach(a => {
+    const k = a.adsetId || a.adsetName || '_unknown';
+    siblingsByAdset[k] = (siblingsByAdset[k] || 0) + 1;
+  });
+
   // ── Per-ad verdict (CMO logic) ──
   const scored = ads.filter(a => a.spend > 0 || a.impressions > 100).map(a => {
     const mat = maturity(a);
     const cpr = (a.firstReply || 0) > 0 ? a.spend / a.firstReply : null;
     const dSpend = a.spend / nDays;
+    const siblings = (siblingsByAdset[a.adsetId || a.adsetName || '_unknown'] || 1) - 1;
+    const hasSiblings = siblings > 0;
 
     let bucket, action, reason, impact;
 
@@ -503,34 +514,42 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
       // MATURE — hard verdicts
       if (cpr != null && avgCPR != null && cpr > avgCPR * 3 && a.firstReply < 5) {
         bucket = 'stop';
-        action = 'STOP NOW';
+        action = hasSiblings ? 'PAUSE THIS AD' : 'PAUSE AD (solo)';
         reason = `Cost per reply $${cpr.toFixed(2)} is ${(cpr/avgCPR).toFixed(1)}× account avg ($${avgCPR.toFixed(2)}). Only ${a.firstReply} reply${a.firstReply===1?'':'ies'} after ${fmt(a.impressions)} imps.`;
-        impact = `Pause and reclaim $${dSpend.toFixed(0)}/d → reinvest into top scaler for +${((dSpend / avgCPR)).toFixed(0)} extra replies/day at current efficiency.`;
+        impact = hasSiblings
+          ? `Toggle Bata-off in Ads Manager. Budget stays in ad set "${a.adsetName || '?'}" — the ${siblings} sibling ad${siblings===1?'':'s'} will absorb your slice.`
+          : `Solo ad — pausing it also pauses spend in ad set "${a.adsetName || '?'}". Reclaims $${dSpend.toFixed(0)}/d.`;
       } else if (a.ctr < 0.5) {
         bucket = 'stop';
-        action = 'STOP NOW';
+        action = hasSiblings ? 'PAUSE THIS AD' : 'PAUSE AD (solo)';
         reason = `CTR ${pct(a.ctr)} after ${fmt(a.impressions)} imps means creative is not stopping the scroll. ${a.firstReply || 0} replies / $${a.spend.toFixed(0)} spent.`;
-        impact = `Pause and reclaim $${dSpend.toFixed(0)}/d. Reload with a stronger hook.`;
+        impact = hasSiblings
+          ? `Toggle off in Ads Manager. Budget flows to ${siblings} sibling${siblings===1?'':'s'} in same ad set. Reload with a stronger hook when you add a new ad.`
+          : `Pause reclaims $${dSpend.toFixed(0)}/d from ad set "${a.adsetName || '?'}". Reload with a stronger hook.`;
       } else if (a.frequency > 4) {
         bucket = 'fatigue';
         action = 'ROTATE CREATIVE';
         reason = `Frequency ${a.frequency?.toFixed?.(1)} = audience seeing this ad 4+ times. Diminishing returns.`;
-        impact = `Swap creative within 48 hrs or CPM will inflate ~30% next week.`;
+        impact = `Pause this ad + add a fresh creative to the same ad set within 48 hrs, or CPM will inflate ~30% next week.`;
       } else if (cpr != null && avgCPR != null && cpr < avgCPR * 0.6 && a.spend > 20) {
         bucket = 'scale';
-        action = 'SCALE +25%';
+        action = hasSiblings ? 'SCALE THIS AD SET +25%' : 'SCALE AD SET +25%';
         reason = `Cost per reply $${cpr.toFixed(2)} is ${(avgCPR/cpr).toFixed(1)}× MORE efficient than account avg ($${avgCPR.toFixed(2)}). Generated ${a.firstReply} replies for $${a.spend.toFixed(0)}.`;
-        impact = `Bump daily +$${(dSpend*0.25).toFixed(0)} → projected +${(dSpend*0.25/cpr).toFixed(0)} more replies/day at this efficiency.`;
+        impact = hasSiblings
+          ? `Edit ad set "${a.adsetName || '?'}" daily budget +25%. All ${siblings + 1} ads in this set benefit — Meta gives more to this winner naturally.`
+          : `Edit ad set "${a.adsetName || '?'}" daily budget +25% (~+$${(dSpend*0.25).toFixed(0)}/d). Projected +${(dSpend*0.25/cpr).toFixed(0)} more replies/day.`;
       } else if (a.ctr > avgCTR * 1.5 && cpr != null && avgCPR != null && cpr < avgCPR) {
         bucket = 'scale';
-        action = 'SCALE +15%';
+        action = 'SCALE AD SET +15%';
         reason = `CTR ${pct(a.ctr)} (${(a.ctr/avgCTR).toFixed(1)}× avg) and cost/reply $${cpr.toFixed(2)} both beating account avg.`;
-        impact = `Bump +$${(dSpend*0.15).toFixed(0)}/d. Don't go more than 25% per day or learning resets.`;
+        impact = `Edit ad set "${a.adsetName || '?'}" daily budget +15%. Don't go more than 25% per day or learning resets.`;
       } else if (cpr != null && avgCPR != null && cpr > avgCPR * 1.5) {
         bucket = 'reduce';
-        action = 'REDUCE 50%';
+        action = hasSiblings ? 'PAUSE THIS AD' : 'REDUCE AD SET 50%';
         reason = `Cost per reply $${cpr.toFixed(2)} is ${(cpr/avgCPR).toFixed(1)}× avg. Spending too much for too few replies.`;
-        impact = `Halve daily to $${(dSpend*0.5).toFixed(0)}/d. Frees $${(dSpend*0.5).toFixed(0)}/d for winners.`;
+        impact = hasSiblings
+          ? `Toggle off in Ads Manager (there ${siblings===1?'is':'are'} ${siblings} other ad${siblings===1?'':'s'} in "${a.adsetName || '?'}" that will absorb the budget — ad set total stays the same but $/reply improves).`
+          : `Solo ad in ad set "${a.adsetName || '?'}" — halve the ad set daily budget to $${(dSpend*0.5).toFixed(0)}/d.`;
       } else {
         bucket = 'keep';
         action = 'KEEP';
@@ -603,9 +622,13 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
           <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: 'var(--gold)', background: '#1a1a1a' }}>
             <b style={{ color: 'var(--gold)' }}>💼 Headline Recommendation</b>
             <p style={{ margin: '.5rem 0 0', fontSize: '.85rem', lineHeight: 1.5 }}>
-              Pause <b>{stops.length}</b> mature loser{stops.length===1?'':'s'} (reclaims <b>{$(reclaimedDaily, 0)}/day</b>) and bump budget on <b>{scales.length}</b> winner{scales.length===1?'':'s'} (+{$(scaleBoostDaily, 0)}/d).
-              Net daily spend change: <b style={{ color: netDailyChange < 0 ? 'var(--grn)' : '#d80' }}>{netDailyChange < 0 ? '' : '+'}{$(netDailyChange, 0)}/day</b>.
-              Projected impact: <b style={{ color: 'var(--grn)' }}>+{netRepliesPerDay.toFixed(0)} extra replies/day</b> at current efficiency.
+              Pause <b>{stops.length}</b> underperforming ad{stops.length===1?'':'s'} (Meta redistributes their share to sibling ads in the same ad set — no net budget change).
+              {scales.length > 0 && <> Bump budget on <b>{scales.length}</b> winning ad set{scales.length===1?'':'s'} (+{$(scaleBoostDaily, 0)}/d).</>}
+              <br />
+              <span style={{ color: 'var(--at2)' }}>Net daily spend change from budget bumps: <b style={{ color: netDailyChange < 0 ? 'var(--grn)' : '#d80' }}>{netDailyChange < 0 ? '' : '+'}{$(netDailyChange, 0)}/day</b>. Projected impact from pauses + boosts: <b style={{ color: 'var(--grn)' }}>+{netRepliesPerDay.toFixed(0)} extra replies/day</b> at current efficiency.</span>
+            </p>
+            <p style={{ margin: '.5rem 0 0', fontSize: '.72rem', color: 'var(--at3)', fontStyle: 'italic' }}>
+              ℹ Reminder: your ads are ABO — budgets are set at the AD SET level. Pausing a losing ad shifts its share to sibling ads in the same ad set; the ad set total stays the same but $/reply improves.
             </p>
           </div>
         )}

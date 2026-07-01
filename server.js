@@ -524,6 +524,8 @@ app.get('/api/analytics', async (req, res) => {
         account: a._account,
         id: a.ad_id,
         name: a.ad_name,
+        adsetId: a.adset_id,           // ← ABO/CBO decisions need this
+        adsetName: a.adset_name,
         campName: a.campaign_name,
         campId: a.campaign_id,
         spend,
