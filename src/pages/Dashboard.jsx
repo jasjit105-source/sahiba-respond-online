@@ -447,6 +447,11 @@ function ActionButtons({ ad, bucket }) {
 //   3. Every recommendation includes the $ impact + specific reallocation move.
 //   4. Layered by urgency: Stop Now → Scale Now → Watch → Cook → Strategy.
 export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals = {} }) {
+  // Load current ad-set daily caps from budget-tracker so we can flag underspend.
+  // Underspend = you set a cap but Meta isn't spending it. Root cause is usually
+  // audience too narrow, learning-phase stuck, or delivery-limited creative.
+  const [budget, setBudget] = useState(null);
+  useEffect(() => { api.getBudgetTracker().then(setBudget).catch(() => setBudget({ ok: false })); }, []);
   const tImps = ads.reduce((s, a) => s + a.impressions, 0);
   const tClicks = ads.reduce((s, a) => s + a.clicks, 0);
   const tAdSpend = ads.reduce((s, a) => s + a.spend, 0);
@@ -618,6 +623,51 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
           <div className="k"><div className="l">Daily Burn</div><div className="v">{$(dailyBudget,0)}</div><div className="s">/day current</div></div>
         </div>
 
+        {/* ── Under-utilization alert — Meta not spending your intended cap ── */}
+        {budget?.ok && (() => {
+          const spendByAdset = {};
+          ads.forEach(a => {
+            const k = a.adsetId; if (!k) return;
+            spendByAdset[k] = (spendByAdset[k] || 0) + (a.spend || 0);
+          });
+          const under = (budget.adsets || [])
+            .filter(a => a.adset_status === 'ACTIVE' && a.daily_budget > 0)
+            .map(a => {
+              const totalSpend = spendByAdset[a.adset_id] || 0;
+              const avgDaily = totalSpend / nDays;
+              const util = a.daily_budget > 0 ? (avgDaily / a.daily_budget * 100) : 0;
+              return { ...a, avgDaily, util, gap: a.daily_budget - avgDaily };
+            })
+            .filter(a => a.util < 60)
+            .sort((a, b) => a.util - b.util);
+          if (under.length === 0) return null;
+          const totalGap = under.reduce((s, a) => s + a.gap, 0);
+          return (
+            <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: '#d33', background: '#1a1a1a' }}>
+              <b style={{ color: '#d33' }}>🚨 UNDER-UTILIZATION ALERT — Meta is not spending your intended cap</b>
+              <p style={{ margin: '.5rem 0 0', fontSize: '.85rem', lineHeight: 1.5 }}>
+                <b>{under.length} active ad set{under.length===1?'':'s'}</b> spending under 60% of their daily cap. Combined <b>${totalGap.toFixed(0)}/day</b> of budget is going unused. This is the biggest leak in the account.
+              </p>
+              <table style={{ width: '100%', marginTop: '.6rem', fontSize: '.75rem' }}>
+                <thead><tr style={{ color: 'var(--at3)' }}><th style={{ textAlign: 'left' }}>Ad Set</th><th className="r">Cap $/d</th><th className="r">Actual $/d</th><th className="r">Util</th><th className="r">Gap</th></tr></thead>
+                <tbody>
+                  {under.map(a => (
+                    <tr key={a.adset_id}>
+                      <td>{a.adset_name?.slice(0, 30)}</td>
+                      <td className="r">${a.daily_budget.toFixed(0)}</td>
+                      <td className="r">${a.avgDaily.toFixed(2)}</td>
+                      <td className="r" style={{ color: a.util < 20 ? '#d33' : a.util < 40 ? '#d80' : 'var(--gold)', fontWeight: 700 }}>{a.util.toFixed(0)}%</td>
+                      <td className="r" style={{ color: 'var(--red,#d33)' }}>-${a.gap.toFixed(0)}/d</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.6rem', fontStyle: 'italic' }}>
+                Root causes to check: audience too narrow, learning-phase stuck (consolidate ad sets), creative rejection (check Delivery column), or auction competition against your own other ad sets.
+              </p>
+            </div>
+          );
+        })()}
         {(stops.length > 0 || scales.length > 0) && (
           <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: 'var(--gold)', background: '#1a1a1a' }}>
             <b style={{ color: 'var(--gold)' }}>💼 Headline Recommendation</b>
