@@ -475,8 +475,17 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
   // ── ABO reality: budget lives at the AD SET, not the ad. Count sibling ads per
   // ad set so we can tell the user the RIGHT action: PAUSE this ad (siblings absorb
   // spend, ad-set total unchanged) vs REDUCE AD SET BUDGET (whole set gets cut).
+  // Sibling count: analytics doesn't reliably return effective_status, so we
+  // approximate "currently active" by (a) deduping ad IDs and (b) requiring
+  // some spend in the window (paused ads accumulate no more spend). Imperfect
+  // but avoids both directions of error (over-counting stale ads / zero-counting
+  // when status is missing). Impact copy stays vague on the exact number.
   const siblingsByAdset = {};
+  const seenIds = new Set();
   ads.forEach(a => {
+    if (!a.id || seenIds.has(a.id)) return;
+    if (!a.spend || a.spend <= 0.5) return;  // proxy for "actually running"
+    seenIds.add(a.id);
     const k = a.adsetId || a.adsetName || '_unknown';
     siblingsByAdset[k] = (siblingsByAdset[k] || 0) + 1;
   });
@@ -522,14 +531,14 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
         action = hasSiblings ? 'PAUSE THIS AD' : 'PAUSE AD (solo)';
         reason = `Cost per reply $${cpr.toFixed(2)} is ${(cpr/avgCPR).toFixed(1)}× account avg ($${avgCPR.toFixed(2)}). Only ${a.firstReply} reply${a.firstReply===1?'':'ies'} after ${fmt(a.impressions)} imps.`;
         impact = hasSiblings
-          ? `Toggle Bata-off in Ads Manager. Budget stays in ad set "${a.adsetName || '?'}" — the ${siblings} sibling ad${siblings===1?'':'s'} will absorb your slice.`
+          ? `Toggle off in Ads Manager. Other active ads in "${a.adsetName || '?'}" will absorb this ad's slice — ad set total stays the same, $/reply improves.`
           : `Solo ad — pausing it also pauses spend in ad set "${a.adsetName || '?'}". Reclaims $${dSpend.toFixed(0)}/d.`;
       } else if (a.ctr < 0.5) {
         bucket = 'stop';
         action = hasSiblings ? 'PAUSE THIS AD' : 'PAUSE AD (solo)';
         reason = `CTR ${pct(a.ctr)} after ${fmt(a.impressions)} imps means creative is not stopping the scroll. ${a.firstReply || 0} replies / $${a.spend.toFixed(0)} spent.`;
         impact = hasSiblings
-          ? `Toggle off in Ads Manager. Budget flows to ${siblings} sibling${siblings===1?'':'s'} in same ad set. Reload with a stronger hook when you add a new ad.`
+          ? `Toggle off in Ads Manager. Other active ads in "${a.adsetName || '?'}" will absorb the budget. Reload with a stronger hook when you add a new ad.`
           : `Pause reclaims $${dSpend.toFixed(0)}/d from ad set "${a.adsetName || '?'}". Reload with a stronger hook.`;
       } else if (a.frequency > 4) {
         bucket = 'fatigue';
@@ -541,7 +550,7 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
         action = hasSiblings ? 'SCALE THIS AD SET +25%' : 'SCALE AD SET +25%';
         reason = `Cost per reply $${cpr.toFixed(2)} is ${(avgCPR/cpr).toFixed(1)}× MORE efficient than account avg ($${avgCPR.toFixed(2)}). Generated ${a.firstReply} replies for $${a.spend.toFixed(0)}.`;
         impact = hasSiblings
-          ? `Edit ad set "${a.adsetName || '?'}" daily budget +25%. All ${siblings + 1} ads in this set benefit — Meta gives more to this winner naturally.`
+          ? `Edit ad set "${a.adsetName || '?'}" daily budget +25% (~+$${(dSpend*0.25).toFixed(0)}/d). All ads in this set benefit — Meta will bias delivery to this winner naturally.`
           : `Edit ad set "${a.adsetName || '?'}" daily budget +25% (~+$${(dSpend*0.25).toFixed(0)}/d). Projected +${(dSpend*0.25/cpr).toFixed(0)} more replies/day.`;
       } else if (a.ctr > avgCTR * 1.5 && cpr != null && avgCPR != null && cpr < avgCPR) {
         bucket = 'scale';
@@ -553,7 +562,7 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
         action = hasSiblings ? 'PAUSE THIS AD' : 'REDUCE AD SET 50%';
         reason = `Cost per reply $${cpr.toFixed(2)} is ${(cpr/avgCPR).toFixed(1)}× avg. Spending too much for too few replies.`;
         impact = hasSiblings
-          ? `Toggle off in Ads Manager (there ${siblings===1?'is':'are'} ${siblings} other ad${siblings===1?'':'s'} in "${a.adsetName || '?'}" that will absorb the budget — ad set total stays the same but $/reply improves).`
+          ? `Toggle off in Ads Manager. Other active ads in "${a.adsetName || '?'}" will absorb the budget — ad set total stays the same, $/reply improves.`
           : `Solo ad in ad set "${a.adsetName || '?'}" — halve the ad set daily budget to $${(dSpend*0.5).toFixed(0)}/d.`;
       } else {
         bucket = 'keep';
