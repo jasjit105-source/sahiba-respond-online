@@ -462,13 +462,34 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
   const avgCPR = tMsgs > 0 ? tAdSpend / tMsgs : null;        // cost per reply (true conversion proxy)
   const dailyBudget = tSpend / nDays;
 
-  // ── Maturity classification — KEY rule: never kill ads still learning ──
-  // < 500 imps OR < $5 spent  = LEARNING (no verdict yet)
-  // 500-2000 imps             = EARLY (soft watch only)
-  // 2000+ imps                = MATURE (hard verdict OK)
+  // ── Maturity classification — TIME + VOLUME + SPEND ──
+  // User's CMO insight (2026-07): Meta's learning phase is TIME-based, not just
+  // volume-based. A high-budget ad can hit 2000 imps in 8 hours but that's not
+  // enough time for Meta's algorithm cycle. Never issue hard verdicts before
+  // Day 3 regardless of numbers.
+  //
+  //   Age < 3 days       → LEARNING (Meta's hard learning phase — HANDS OFF)
+  //   Age 3-7 days       → EARLY (soft directional verdicts only, no hard PAUSE)
+  //   Age 7+ days AND    → MATURE (learning phase complete, full verdicts trusted)
+  //     2000+ imps AND
+  //     $5+ spent
+  //   Otherwise          → EARLY (regardless of age — needs more signal)
+  const ageInDays = (a) => {
+    if (!a.createdAt) return null;
+    const created = new Date(a.createdAt);
+    if (isNaN(created)) return null;
+    return (Date.now() - created.getTime()) / 86400000;
+  };
   const maturity = (a) => {
-    if (a.impressions < 500 || a.spend < 5) return 'LEARNING';
-    if (a.impressions < 2000) return 'EARLY';
+    const age = ageInDays(a);
+    // If we don't know age, fall back to volume-only (conservative — treat unknown as EARLY, not MATURE)
+    if (age == null) {
+      if (a.impressions < 500 || a.spend < 5) return 'LEARNING';
+      return 'EARLY';   // Never issue hard verdicts without age info
+    }
+    if (age < 3) return 'LEARNING';                          // absolute learning phase — no touch
+    if (age < 7) return 'EARLY';                             // soft signal only
+    if (a.impressions < 2000 || a.spend < 5) return 'EARLY'; // still needs volume even at 7+ days
     return 'MATURE';
   };
 
@@ -714,6 +735,7 @@ export function RecsTab({ ads = [], camps = [], tSpend = 0, nDays = 30, totals =
                 <span style={{ marginLeft: 12 }}>$/Reply: <b>{a.cpr ? '$'+a.cpr.toFixed(2) : '—'}</b></span>
                 <span style={{ marginLeft: 12 }}>Daily: <b>{$(a.dSpend, 0)}</b></span>
                 <span style={{ marginLeft: 12, background: a.maturity==='MATURE'?'var(--grn)':a.maturity==='EARLY'?'var(--gold)':'var(--at3)', color:'#000', padding:'1px 5px', borderRadius:3, fontSize:'.65rem' }}>{a.maturity}</span>
+                {a.createdAt && <span style={{ marginLeft: 8, fontSize:'.7rem', color: 'var(--at2)' }}>Age: <b>{Math.floor(((Date.now() - new Date(a.createdAt).getTime())/86400000))}d</b></span>}
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--at)', marginTop: '.5rem', lineHeight: 1.4 }}>{a.reason}</div>
               <div style={{ fontSize: '.78rem', color: g.color, marginTop: '.3rem', fontWeight: 600 }}>→ {a.impact}</div>

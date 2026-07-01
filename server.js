@@ -448,7 +448,11 @@ app.get('/api/analytics', async (req, res) => {
       mcpCall('get_insights', { object_id: acct.id, level: 'campaign', time_range: timeRange }),
       mcpCall('get_insights', { object_id: acct.id, level: 'account', time_range: timeRange, time_breakdown: 'day' }),
       mcpCall('get_insights', { object_id: acct.id, level: 'ad', time_range: timeRange }),
-      mcpCall('get_insights', { object_id: acct.id, level: 'account', time_range: timeRange, breakdown: 'hourly_stats_aggregated_by_advertiser_time_zone' }).catch(e => ({ _err: e.message }))
+      mcpCall('get_insights', { object_id: acct.id, level: 'account', time_range: timeRange, breakdown: 'hourly_stats_aggregated_by_advertiser_time_zone' }).catch(e => ({ _err: e.message })),
+      // Pull ad metadata (created_time, status) so CMO Report can factor in ad AGE — Meta
+      // insights alone doesn't tell you when an ad was created, and time-in-market is
+      // critical for the learning-phase-aware maturity classification.
+      mcpCall('get_ads', { account_id: acct.id, limit: 200 }).catch(e => ({ _err: e.message }))
     ]);
     const perAcct = await Promise.all(ACCTS.map(fetchForAcct));
 
@@ -457,13 +461,28 @@ app.get('/api/analytics', async (req, res) => {
     const adsList = [];
     const dailyAggregator = {}; // date → merged daily totals
     let hourlyData = null;
+    // adMetaByAcct[account][ad_id] → { created_time, status, effective_status }
+    // Built from get_ads (5th call per account) so we can attach creation date +
+    // real status to each insights row later. Meta insights doesn't include either.
+    const adMetaByAcct = {};
     perAcct.forEach((acctResults, idx) => {
       const acctName = ACCTS[idx].name;
-      const [campRaw, dailyRaw, adsRaw, hourlyRaw] = acctResults;
+      const [campRaw, dailyRaw, adsRaw, hourlyRaw, adsMetaRaw] = acctResults;
       const cD = extractText(campRaw); const dD = extractText(dailyRaw); const aD = extractText(adsRaw);
       const hD = hourlyRaw?._err ? null : extractText(hourlyRaw);
+      const amD = adsMetaRaw?._err ? null : extractText(adsMetaRaw);
+      adMetaByAcct[acctName] = {};
+      (amD?.data || []).forEach(m => { adMetaByAcct[acctName][m.id] = m; });
       (cD?.data || []).forEach(c => { c._account = acctName; campList.push(c); });
-      (aD?.data || []).forEach(a => { a._account = acctName; adsList.push(a); });
+      (aD?.data || []).forEach(a => {
+        a._account = acctName;
+        const meta = adMetaByAcct[acctName][a.ad_id];
+        if (meta) {
+          a._created_time = meta.created_time;
+          a._effective_status = meta.effective_status || meta.status;
+        }
+        adsList.push(a);
+      });
       // Merge daily into aggregator
       const segs = dD?.segmented_metrics || dD?.data || (Array.isArray(dD) ? dD : []);
       for (const seg of segs) {
@@ -524,6 +543,8 @@ app.get('/api/analytics', async (req, res) => {
         account: a._account,
         id: a.ad_id,
         name: a.ad_name,
+        createdAt: a._created_time || null,        // ← learning-phase-aware CMO
+        effectiveStatus: a._effective_status || null,
         adsetId: a.adset_id,           // ← ABO/CBO decisions need this
         adsetName: a.adset_name,
         campName: a.campaign_name,
