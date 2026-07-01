@@ -29,6 +29,7 @@ export const api = {
   getAdOptimizer: (days) => request('GET', `/ad-optimizer?days=${days || 7}`),
   getBudgetTracker: () => request('GET', '/budget-tracker'),
   logRecAction: (data) => request('POST', '/rec-action', data),
+  igPublish: (data) => request('POST', '/ig-publish', data),
   getRecActions: (days, adId) => request('GET', `/rec-actions?days=${days || 14}${adId ? '&ad_id=' + adId : ''}`),
   getMetaCampaigns: () => request('GET', '/meta-campaigns'),
   promoteIgPost: (data) => request('POST', '/promote-ig-post', data),

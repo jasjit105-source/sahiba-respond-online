@@ -5,6 +5,7 @@ const NAV = [
   { to: '/', label: 'Today', icon: '\u{1F305}' },                      // sunrise — your 8am ritual
   { to: '/daily-report', label: 'CMO Report', icon: '\u{1F9E0}' },     // strategic recs (renamed from "AI Report")
   { to: '/tiktok', label: 'TikTok', icon: '\u{1F3B5}' },               // separate platform — own page
+  { to: '/ig-publish', label: 'IG Publisher', icon: '\u{1F4E4}' },       // Dropbox video → IG Reel (one-button)
   // ─ Management ─
   { to: '/campaigns', label: 'Campaigns', icon: '\u{1F3AF}' },
   { to: '/adsets', label: 'Ad Sets', icon: '\u{1F465}' },

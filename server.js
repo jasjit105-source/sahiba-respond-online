@@ -2123,6 +2123,89 @@ app.get('/api/geo-roi', async (req, res) => {
   }
 });
 
+// ─── IG Publisher — one-button Reel publish from Dropbox URL ───
+// Meta's Publishing API is 3 async calls (create container → poll status →
+// publish). This endpoint hides all that from the frontend and returns only
+// when the Reel is actually live (or fails). Dropbox URLs get auto-converted
+// to direct-download form so Meta can fetch them.
+function toDropboxDirect(url) {
+  if (!url) return url;
+  // Handle both classic /s/ links and newer /scl/fi/ links
+  let u = url.replace('www.dropbox.com', 'dl.dropboxusercontent.com');
+  u = u.replace(/([?&])dl=0(&|$)/, '$1dl=1$2');
+  if (!/[?&]dl=1/.test(u)) u += (u.includes('?') ? '&' : '?') + 'dl=1';
+  return u;
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+app.post('/api/ig-publish', async (req, res) => {
+  try {
+    const { video_url, caption, share_to_feed = true, thumb_offset } = req.body;
+    if (!video_url) return res.status(400).json({ ok: false, error: 'video_url required' });
+
+    const IG_USER_ID = setting('ig_user_id');
+    if (!IG_USER_ID) return res.status(500).json({ ok: false, error: 'ig_user_id not in settings' });
+
+    const directUrl = toDropboxDirect(video_url);
+    const steps = [];
+    steps.push(`Resolved Dropbox URL → ${directUrl.slice(0, 80)}${directUrl.length > 80 ? '…' : ''}`);
+
+    // Step 1: create the media container
+    const containerParams = {
+      media_type: 'REELS',
+      video_url: directUrl,
+      caption: caption || '',
+      share_to_feed: !!share_to_feed
+    };
+    if (thumb_offset != null) containerParams.thumb_offset = thumb_offset;
+    const create = await graphCall('POST', `/${IG_USER_ID}/media`, containerParams);
+    if (!create?.id) return res.status(500).json({ ok: false, error: 'container create failed', detail: create, steps });
+    const containerId = create.id;
+    steps.push(`Created container ${containerId}`);
+
+    // Step 2: poll status until FINISHED (Meta needs ~30-90s to process a Reel)
+    let ready = false;
+    let lastStatus = null;
+    for (let i = 0; i < 24; i++) {  // 24 × 5s = 120s max
+      await sleep(5000);
+      const st = await graphCall('GET', `/${containerId}`, { fields: 'status_code,status' });
+      lastStatus = st?.status_code || st?.status;
+      if (lastStatus === 'FINISHED') { ready = true; steps.push(`Container ready after ${(i+1)*5}s`); break; }
+      if (lastStatus === 'ERROR' || lastStatus === 'EXPIRED') {
+        return res.status(500).json({ ok: false, error: `container ${lastStatus}`, detail: st, container_id: containerId, steps });
+      }
+    }
+    if (!ready) return res.status(500).json({ ok: false, error: 'timed out (2 min) waiting for Meta to process video', last_status: lastStatus, container_id: containerId, steps });
+
+    // Step 3: publish
+    const publish = await graphCall('POST', `/${IG_USER_ID}/media_publish`, { creation_id: containerId });
+    if (!publish?.id) return res.status(500).json({ ok: false, error: 'publish call failed', detail: publish, container_id: containerId, steps });
+    const mediaId = publish.id;
+    steps.push(`Published as media ${mediaId}`);
+
+    // Step 4: get the permalink so we can show it to the user
+    let permalink = null, timestamp = null;
+    try {
+      const meta = await graphCall('GET', `/${mediaId}`, { fields: 'permalink,timestamp' });
+      permalink = meta?.permalink;
+      timestamp = meta?.timestamp;
+    } catch {}
+
+    // Log to DB so we have a history of what's been published
+    try {
+      run(`INSERT OR IGNORE INTO recommendation_actions
+           (ad_id, ad_name, campaign_name, rec_bucket, rec_action, user_choice, note)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [mediaId, `IG Reel ${mediaId}`, 'IG Publisher', 'ig-publish', 'PUBLISH', 'actioned',
+         `caption=${(caption || '').slice(0, 100)} | video=${directUrl.slice(0, 100)}`]);
+    } catch {}
+
+    res.json({ ok: true, media_id: mediaId, container_id: containerId, permalink, timestamp, steps });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── CMO Recommendation Action Log ───
 // User clicks "✓ Actioned" / "✗ Ignored" / "≠ Different" on a CMO recommendation;
 // we log it so next-morning report can close the loop ("yesterday you scaled X, here's
