@@ -5,7 +5,7 @@
 // on the Today dashboard — both kept in sync via the named export from Dashboard.jsx.
 import { useState, useEffect } from 'react';
 import { api } from '../api';
-import { RecsTab } from './Dashboard';
+import { RecsTab, STYLES } from './Dashboard';
 
 export default function CMOReportPage() {
   const [data, setData] = useState(null);
@@ -21,10 +21,10 @@ export default function CMOReportPage() {
   }, []);
 
   if (loading) return (
-    <div className="analyzer"><div className="ld"><div className="sp"></div><p>Loading CMO Report…</p></div></div>
+    <div className="analyzer"><style>{STYLES}</style><div className="ld"><div className="sp"></div><p>Loading CMO Report…</p></div></div>
   );
   if (error) return (
-    <div className="analyzer"><div className="err">Error: {error}</div></div>
+    <div className="analyzer"><style>{STYLES}</style><div className="err">Error: {error}</div></div>
   );
 
   const { ads = [], camps = [], totals = {}, period = {} } = data || {};
@@ -33,6 +33,7 @@ export default function CMOReportPage() {
 
   return (
     <div className="analyzer">
+      <style>{STYLES}</style>
       <RecsTab ads={ads} camps={camps} tSpend={tSpend} nDays={nDays} totals={totals} />
     </div>
   );

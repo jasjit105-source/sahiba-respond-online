@@ -29,7 +29,10 @@ function gp(p) {
 }
 
 // ═══ STYLES ═══
-const STYLES = `
+// Exported: DailyReport (CMO Report) and TikTok pages render Dashboard's tabs
+// standalone, so they must inject this same dark-theme block or the .analyzer
+// CSS variables are undefined and text renders dark-on-dark.
+export const STYLES = `
 body { background: #111318 !important; }
 main { max-width: none !important; padding: 0 !important; }
 .analyzer {
