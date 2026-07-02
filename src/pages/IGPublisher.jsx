@@ -1,7 +1,3 @@
-// One-button IG Reel publisher — pastes a Dropbox video URL + caption, hits the
-// button, backend does the 3-step Meta dance and returns the permalink. First
-// step toward the fully automated 10-reels/day pipeline; keeping it manual for
-// now so the user can eyeball each post before automating.
 import { useState } from 'react';
 import { api } from '../api';
 
@@ -30,88 +26,94 @@ export default function IGPublisherPage() {
   };
 
   return (
-    <div className="analyzer">
-      <div className="sec">
-        <h2 className="sh">📤 Instagram Reel Publisher</h2>
-        <p style={{ fontSize: '.85rem', color: 'var(--at2)', marginBottom: '1rem' }}>
-          Paste a Dropbox video URL + caption → post lands on @sahiba_mexico. Takes ~60-90 seconds while Meta processes the video.
-          Dropbox links auto-convert to direct-download form (I handle both <code>?dl=0</code> and <code>?dl=1</code> variants).
+    <div className="max-w-3xl mx-auto space-y-6">
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-2">📤 Instagram Reel Publisher</h2>
+        <p className="text-sm text-gray-600 mb-5">
+          Paste a Dropbox video URL + caption → post lands on <b>@sahiba_mexico</b>. Takes ~60-90 seconds while Meta processes the video.
+          Dropbox links auto-convert to direct-download form.
         </p>
 
-        <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', fontSize: '.75rem', color: 'var(--at2)', marginBottom: '.3rem', textTransform: 'uppercase', letterSpacing: '.05em' }}>Dropbox video URL</label>
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Dropbox video URL</label>
           <input
             type="text"
             value={videoUrl}
             onChange={e => setVideoUrl(e.target.value)}
             disabled={status === 'publishing'}
             placeholder="https://www.dropbox.com/scl/fi/abc123/video.mp4?rlkey=xyz&dl=0"
-            style={{ width: '100%', padding: '.55rem .7rem', fontSize: '.85rem', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', borderRadius: 6, fontFamily: 'monospace' }}
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50"
           />
-          <p style={{ fontSize: '.7rem', color: 'var(--at3)', marginTop: '.3rem' }}>Any Dropbox share URL works. Video must be 9:16, 3-90 sec, MP4/MOV, ≤ 100 MB.</p>
+          <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+            Any Dropbox share URL works. Video must be 9:16, 3-90 sec, MP4/MOV, ≤ 100 MB.
+            <br />
+            🎯 <b>Target duration: 8-15 seconds</b> (sweet spot: <b>10s</b>). Anything over 30s tanks completion rate on AI reels.
+          </p>
         </div>
 
-        <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', fontSize: '.75rem', color: 'var(--at2)', marginBottom: '.3rem', textTransform: 'uppercase', letterSpacing: '.05em' }}>Caption</label>
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Caption</label>
           <textarea
             value={caption}
             onChange={e => setCaption(e.target.value)}
             disabled={status === 'publishing'}
-            rows={5}
-            placeholder="🚨 ¡ATENCIÓN MAYORISTAS! 🚨&#10;👗 Vestidos hermosos por 70 pesos&#10;📦 Paquete de 24 piezas&#10;💬 Cotiza por WhatsApp: wa.me/5215657534707"
-            style={{ width: '100%', padding: '.55rem .7rem', fontSize: '.82rem', background: 'var(--as2)', border: '1px solid var(--abdr)', color: 'var(--at)', borderRadius: 6, fontFamily: 'inherit', resize: 'vertical' }}
+            rows={6}
+            placeholder="👗 Nueva colección Sahiba — directo de fábrica&#10;🇲🇽 Mayoreo desde CDMX&#10;📦 Pedidos por WhatsApp: wa.me/5215657534707&#10;&#10;#Sahiba #ModaMayorista #Vestidos"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 resize-y"
           />
         </div>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontSize: '.82rem', color: 'var(--at2)', marginBottom: '1rem' }}>
-          <input type="checkbox" checked={shareToFeed} onChange={e => setShareToFeed(e.target.checked)} disabled={status === 'publishing'} />
+        <label className="flex items-center gap-2 text-sm text-gray-700 mb-5 cursor-pointer">
+          <input type="checkbox" checked={shareToFeed} onChange={e => setShareToFeed(e.target.checked)} disabled={status === 'publishing'} className="rounded" />
           Also share to grid feed (not just Reels tab)
         </label>
 
-        <div style={{ display: 'flex', gap: '.6rem' }}>
+        <div className="flex gap-3">
           <button
             onClick={publish}
             disabled={!videoUrl.trim() || status === 'publishing'}
-            style={{ background: 'var(--gold)', color: '#000', padding: '.7rem 1.4rem', borderRadius: 6, border: 'none', fontWeight: 700, fontSize: '.9rem', cursor: status === 'publishing' ? 'wait' : 'pointer', opacity: !videoUrl.trim() || status === 'publishing' ? 0.4 : 1 }}
+            className={`px-6 py-3 rounded font-bold text-sm transition-colors ${
+              !videoUrl.trim() || status === 'publishing'
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : 'bg-blue-600 text-white hover:bg-blue-700 cursor-pointer'
+            }`}
           >
             {status === 'publishing' ? '⏳ Publishing… (60-90 sec)' : '📤 Publish to Instagram'}
           </button>
           {status !== 'idle' && (
-            <button onClick={reset} style={{ background: 'transparent', border: '1px solid var(--abdr)', color: 'var(--at2)', padding: '.7rem 1rem', borderRadius: 6, fontSize: '.82rem' }}>
+            <button onClick={reset} className="px-4 py-3 rounded border border-gray-300 text-sm text-gray-700 hover:bg-gray-50">
               New Post
             </button>
           )}
         </div>
 
         {status === 'publishing' && (
-          <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: 'var(--gold)' }}>
+          <div className="mt-4 p-3 bg-blue-50 border-l-4 border-blue-500 text-sm text-blue-900 rounded-r">
             Meta is downloading the video from Dropbox → processing → publishing. Don't close this tab. On a slow connection this can take up to 2 minutes.
           </div>
         )}
 
         {status === 'ok' && result?.permalink && (
-          <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: 'var(--grn)', background: 'rgba(74,222,128,.08)' }}>
-            <b style={{ color: 'var(--grn)' }}>✅ Published successfully</b>
-            <div style={{ marginTop: '.5rem', fontSize: '.82rem' }}>
-              <a href={result.permalink} target="_blank" rel="noreferrer" style={{ color: 'var(--gold)', wordBreak: 'break-all' }}>
-                {result.permalink}
-              </a>
-              <div style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.3rem' }}>
-                media_id: <code>{result.media_id}</code> · published at {result.timestamp || 'now'}
-              </div>
+          <div className="mt-4 p-4 bg-green-50 border-l-4 border-green-500 rounded-r">
+            <div className="font-bold text-green-800 mb-1">✅ Published successfully</div>
+            <a href={result.permalink} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all text-sm">
+              {result.permalink}
+            </a>
+            <div className="text-xs text-gray-500 mt-1">
+              media_id: <code className="bg-white px-1 rounded">{result.media_id}</code> · published at {result.timestamp || 'now'}
             </div>
           </div>
         )}
 
         {status === 'err' && (
-          <div className="snap-info" style={{ marginTop: '1rem', borderLeftColor: '#d33', background: 'rgba(248,113,113,.08)' }}>
-            <b style={{ color: '#d33' }}>❌ Publish failed</b>
-            <div style={{ marginTop: '.5rem', fontSize: '.82rem' }}>{result?.error || 'Unknown error'}</div>
-            {result?.last_status && <div style={{ fontSize: '.72rem', color: 'var(--at3)', marginTop: '.3rem' }}>Meta status: {result.last_status}</div>}
+          <div className="mt-4 p-4 bg-red-50 border-l-4 border-red-500 rounded-r">
+            <div className="font-bold text-red-800 mb-1">❌ Publish failed</div>
+            <div className="text-sm text-red-900">{result?.error || 'Unknown error'}</div>
+            {result?.last_status && <div className="text-xs text-gray-600 mt-1">Meta status: {result.last_status}</div>}
             {result?.steps && (
-              <details style={{ marginTop: '.5rem' }}>
-                <summary style={{ fontSize: '.72rem', color: 'var(--at3)', cursor: 'pointer' }}>Debug steps</summary>
-                <ul style={{ fontSize: '.72rem', color: 'var(--at3)', paddingLeft: '1rem' }}>
+              <details className="mt-2">
+                <summary className="text-xs text-gray-600 cursor-pointer">Debug steps</summary>
+                <ul className="text-xs text-gray-700 pl-4 mt-1 list-disc">
                   {result.steps.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
               </details>
@@ -120,19 +122,19 @@ export default function IGPublisherPage() {
         )}
       </div>
 
-      <div className="sec">
-        <h2 className="sh">📋 How to use</h2>
-        <ol style={{ fontSize: '.85rem', lineHeight: 1.7, paddingLeft: '1.2rem', color: 'var(--at2)' }}>
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-lg font-bold text-gray-900 mb-3">📋 How to use</h2>
+        <ol className="text-sm text-gray-700 space-y-1.5 pl-5 list-decimal">
           <li>Upload your video to Dropbox</li>
           <li>Right-click → <b>Share</b> → <b>Create link</b> → <b>Copy link</b></li>
-          <li>Paste here (any format — <code>www.dropbox.com/s/...</code> or <code>/scl/fi/...</code> works)</li>
+          <li>Paste here (any format — <code className="bg-gray-100 px-1 rounded">www.dropbox.com/s/...</code> or <code className="bg-gray-100 px-1 rounded">/scl/fi/...</code> works)</li>
           <li>Write your caption. Emojis and line breaks OK.</li>
           <li>Click <b>📤 Publish to Instagram</b> and wait 60-90 seconds</li>
           <li>You'll get the permalink when it's live</li>
         </ol>
-        <p style={{ fontSize: '.75rem', color: 'var(--at3)', marginTop: '1rem' }}>
-          <b>Requirements:</b> Video must be 9:16 aspect ratio, 3-90 seconds long, MP4 or MOV format, ≤ 100 MB.
-          Meta rejects videos in other formats. Rate limit: 25 posts per 24 hours per IG account.
+        <p className="text-xs text-gray-500 mt-4">
+          <b>Requirements:</b> 9:16 aspect ratio, 3-90 seconds, MP4 or MOV, ≤ 100 MB.
+          Rate limit: 25 posts per 24 hours per IG account.
         </p>
       </div>
     </div>
