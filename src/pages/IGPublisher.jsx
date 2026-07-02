@@ -1,9 +1,29 @@
 import { useState } from 'react';
 import { api } from '../api';
 
+const DEFAULT_CAPTION = `🌺💖 ¡Haz que tu tienda destaque con los vestidos más bonitos de la temporada!
+
+Nuestros vestidos y blusa bordados combinan elegancia, comodidad y excelente calidad. Disponibles varios colores diferentes, son el tipo de prenda que tus clientas verán... ¡y querrán llevarse al instante!
+
+💰 Precio de mayoreo y bulto
+
+✨ Diseños exclusivos.
+✨ Bordados de alta calidad.
+✨ Ideales para boutiques y negocios de moda.
+✨ ¡Se venden rapidísimo!
+
+📍 Ven a conocer toda la colección en nuestra tienda de Mixcalco, CDMX.
+
+📍 Sahiba - Leona Vicario #10, Colonia Centro
+🕒 Lunes a sábado | 9:30 am – 5:30 pm
+📞 55 5542 9041
+
+📲 Videollamada y WhatsApp con Jasmin
++52 55 4603 2968`;
+
 export default function IGPublisherPage() {
   const [videoUrl, setVideoUrl] = useState('');
-  const [caption, setCaption] = useState('');
+  const [caption, setCaption] = useState(DEFAULT_CAPTION);
   const [shareToFeed, setShareToFeed] = useState(true);
   const [status, setStatus] = useState('idle');   // idle | publishing | ok | err
   const [result, setResult] = useState(null);
@@ -22,7 +42,7 @@ export default function IGPublisherPage() {
   };
 
   const reset = () => {
-    setVideoUrl(''); setCaption(''); setStatus('idle'); setResult(null);
+    setVideoUrl(''); setCaption(DEFAULT_CAPTION); setStatus('idle'); setResult(null);
   };
 
   return (
@@ -52,13 +72,23 @@ export default function IGPublisherPage() {
         </div>
 
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Caption</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Caption</label>
+            <button
+              type="button"
+              onClick={() => setCaption(DEFAULT_CAPTION)}
+              disabled={status === 'publishing'}
+              className="text-xs text-blue-600 hover:text-blue-800 disabled:text-gray-400"
+            >
+              ↻ Reset to standard
+            </button>
+          </div>
           <textarea
             value={caption}
             onChange={e => setCaption(e.target.value)}
             disabled={status === 'publishing'}
-            rows={6}
-            placeholder="👗 Nueva colección Sahiba — directo de fábrica&#10;🇲🇽 Mayoreo desde CDMX&#10;📦 Pedidos por WhatsApp: wa.me/5215657534707&#10;&#10;#Sahiba #ModaMayorista #Vestidos"
+            rows={16}
+            placeholder="Standard Sahiba wholesale caption (pre-filled). Edit only if you need product-specific text."
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 resize-y"
           />
         </div>
